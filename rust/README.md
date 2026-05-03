@@ -14,7 +14,7 @@ fetch dependencies with network access, then build, test, and analyze offline.
 - Cargo
 - rust-analyzer, for `skn-rust-analyzer`
 
-These wrappers inherit `skn`’s requirement that `SKN_PATH_CHECK` be set;
+Except in `+S` show mode, these wrappers inherit `skn`’s requirement that `SKN_PATH_CHECK` be set;
 see [`skn` path checks](../README.md#path-checks).
 
 ## Fetch with network, build offline
@@ -56,6 +56,12 @@ skn-cargo +N update
 skn-cargo +N install ripgrep
 ```
 
+Use `+S` to show the generated sandbox command without running Cargo:
+
+```sh
+skn-cargo +S build
+```
+
 When `skn-cargo` detects a Cargo workspace, it binds that workspace writable.
 Outside a detected workspace, it does not implicitly bind the current directory,
 so commands such as `cargo new foo` fail unless you explicitly grant writable access,
@@ -85,6 +91,12 @@ Use `+N` if rust-analyzer should have network access:
 
 ```sh
 skn-rust-analyzer +N
+```
+
+Use `+S` to show the generated sandbox command without starting rust-analyzer:
+
+```sh
+skn-rust-analyzer +S
 ```
 
 The detected Cargo workspace is bound writable because rust-analyzer and Cargo need to write target files and other workspace-local state.

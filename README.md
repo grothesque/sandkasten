@@ -117,6 +117,7 @@ so `skn` can consume `+W ../data` before passing the remaining arguments to `foo
 +A ARG          prepend ARG to COMMAND arguments
 +N              enable network access
 +P              preserve caller environment instead of clearing it
++S              show the sandbox plan after parsing, then exit
 --              stop parsing skn options
 ```
 
@@ -125,6 +126,14 @@ Use `+N` to enable it.
 
 By default, the environment is mostly cleared.
 Use `+E` to pass specific values or `+P` to preserve the caller environment.
+
+Use `+S` to show the setup without running the command.
+It parses the command line, prints the final command, network and environment mode,
+and a multi-line shell-quoted `bwrap` command, then exits.
+It does not run `SKN_PATH_CHECK` or require checked paths to exist;
+use a harmless command such as `skn true ...` when you want validation without running the intended command.
+The printed command may include values passed with `+E`;
+with `+P`, it still depends on the caller environment.
 
 Bind options take effect in the order they are given.
 For example, `+T . +W ./out` makes the current directory transient-writable,
@@ -147,7 +156,7 @@ and may be unavailable with setuid bubblewrap.
 
 ## Path checks
 
-`skn` requires `SKN_PATH_CHECK` to be set.
+Except in `+S` show mode, `skn` requires `SKN_PATH_CHECK` to be set.
 It names a command used to validate paths before they are exposed through `+R`, `+W`, or `+T`.
 
 The command is executed directly, without shell evaluation,
