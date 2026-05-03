@@ -26,7 +26,9 @@
 # rust-analyzer can still start with its usual no-workspace behavior without
 # giving write access to an arbitrary launch directory.
 
-set -eu
+set -euo pipefail
+
+progname="${0##*/}"
 
 append_path_var() {
     local var_name=$1
@@ -83,7 +85,8 @@ skn_args=(
 )
 
 if workspace_manifest=$(cargo locate-project --workspace --message-format=plain 2>/dev/null); then
-    skn_args+=(+W "$(dirname -- "$workspace_manifest")")
+    workspace_dir=$(dirname -- "$workspace_manifest")
+    skn_args+=(+W "$workspace_dir")
 else
     skn_args+=(+R "$(pwd)")
 fi
@@ -104,7 +107,7 @@ if network_enabled_from_skn_show <<<"$skn_show_output"; then
 else
     case $? in
         1) skn_args+=(+E CARGO_NET_OFFLINE=true) ;;
-        *) echo "${0##*/}: internal error parsing skn +S output" >&2; exit 2 ;;
+        *) echo "$progname: internal error parsing skn +S output" >&2; exit 2 ;;
     esac
 fi
 

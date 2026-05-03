@@ -28,7 +28,9 @@
 #   alias cargo-fetch='skn-cargo +N fetch'
 #   alias cargo-update='skn-cargo +N update'
 
-set -eu
+set -euo pipefail
+
+progname="${0##*/}"
 
 append_path_var() {
     local var_name=$1
@@ -78,21 +80,21 @@ network_enabled_from_skn_show() {
     esac
 }
 
-# If they exist, make cargo home writable and rustup home readable.
-append_default_home_path_var SKN_BINDS CARGO_HOME .cargo
-append_default_home_path_var SKN_RO_BINDS RUSTUP_HOME .rustup
-export SKN_BINDS SKN_RO_BINDS
-
 skn_args=(
     skn
     cargo
     +P
 )
 
-if proj=$(cargo locate-project --workspace --message-format=plain 2>/dev/null); then
-    proj=$(dirname -- "$proj")
-    skn_args+=( +W "$proj" )
+if workspace_manifest=$(cargo locate-project --workspace --message-format=plain 2>/dev/null); then
+    workspace_dir=$(dirname -- "$workspace_manifest")
+    skn_args+=(+W "$workspace_dir")
 fi
+
+# If they exist, make cargo home writable and rustup home readable.
+append_default_home_path_var SKN_BINDS CARGO_HOME .cargo
+append_default_home_path_var SKN_RO_BINDS RUSTUP_HOME .rustup
+export SKN_BINDS SKN_RO_BINDS
 
 skn_show_status=0
 skn_show_output=$("${skn_args[@]}" +S "$@") || skn_show_status=$?
@@ -105,7 +107,7 @@ if network_enabled_from_skn_show <<<"$skn_show_output"; then
 else
     case $? in
         1) skn_args+=(+E CARGO_NET_OFFLINE=true) ;;
-        *) echo "${0##*/}: internal error parsing skn +S output" >&2; exit 2 ;;
+        *) echo "$progname: internal error parsing skn +S output" >&2; exit 2 ;;
     esac
 fi
 
