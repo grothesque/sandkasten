@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Run rust-analyzer under skn with defaults suitable for working on untrusted
-# projects.
+# projects, especially with network access disabled by default.
 #
 # This wrapper intentionally stays small and mostly lets skn parse its own
 # options.  Leading skn + options may be given before rust-analyzer arguments,
@@ -19,9 +19,11 @@
 # dependencies with network access and analyzing/building without it.  If +N is
 # given, network access is enabled and CARGO_NET_OFFLINE is not set.
 #
-# The detected Cargo workspace, or the current directory if no workspace is
-# detected, is bound writable because rust-analyzer and cargo may need to write
-# target files and other workspace-local state.
+# The detected Cargo workspace is bound writable because rust-analyzer and cargo
+# may need to write target files and other workspace-local state. If no Cargo
+# workspace is detected, the current directory is bound read-only so
+# rust-analyzer can still start with its usual no-workspace behavior without
+# giving write access to an arbitrary launch directory.
 
 set -eu
 
@@ -65,24 +67,22 @@ while (( i <= $# )); do
     esac
 done
 
-# Determine the workspace directory.  Use the current directory as fallback.
-if workspace=$(cargo locate-project --workspace --message-format=plain 2>/dev/null); then
-    workspace=$(dirname -- "$workspace")
+skn_args=(
+    skn
+    rust-analyzer
+    +P
+)
+
+if workspace_manifest=$(cargo locate-project --workspace --message-format=plain 2>/dev/null); then
+    skn_args+=(+W "$(dirname -- "$workspace_manifest")")
 else
-    workspace=$(pwd)
+    skn_args+=(+R "$(pwd)")
 fi
 
 # If they exist, make cargo home writable and rustup home readable.
 append_path_var SKN_BINDS "${CARGO_HOME:-$HOME/.cargo}"
 append_path_var SKN_RO_BINDS "${RUSTUP_HOME:-$HOME/.rustup}"
 export SKN_BINDS SKN_RO_BINDS
-
-skn_args=(
-    skn
-    rust-analyzer
-    +P
-    +W "$workspace"
-)
 
 if (( network )); then
     exec "${skn_args[@]}" "$@"

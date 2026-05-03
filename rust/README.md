@@ -77,8 +77,10 @@ Use `+N` if rust-analyzer should have network access:
 skn-rust-analyzer +N
 ```
 
-The detected Cargo workspace, or the current directory if no workspace is detected,
-is bound writable because rust-analyzer and Cargo need to write target files and other workspace-local state.
+The detected Cargo workspace is bound writable because rust-analyzer and Cargo need to write target files and other workspace-local state.
+If no Cargo workspace is detected from the current directory,
+the current directory is bound read-only so rust-analyzer can still start with its usual no-workspace behavior without giving write access to an arbitrary launch directory.
+In both cases, the path is checked by `skn`.
 
 ## Installing and using wrappers
 
