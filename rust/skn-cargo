@@ -7,6 +7,7 @@
 #
 #   skn-cargo +N fetch
 #   skn-cargo +W ../dep build
+#   skn-cargo +T ~/.cargo build
 #
 # Without +N, the wrapper asks skn to set CARGO_NET_OFFLINE=true inside the
 # sandbox.  This preserves the important separation between fetching
@@ -57,10 +58,10 @@ while (( i <= $# )); do
             network=1
             break
             ;;
-        +R|+W|+E|+A)
+        +R|+W|+T|+E|+A)
             ((i+=2))
             ;;
-        +R?*|+W?*|+E?*|+A?*|+P)
+        +R?*|+W?*|+T?*|+E?*|+A?*|+P)
             ((++i))
             ;;
         *)

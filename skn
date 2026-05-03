@@ -14,8 +14,8 @@ network access unless enabled with +N.
 
 The only host data bound by default is /usr and a few selected parts of /etc,
 all read-only. Other host data is not visible unless explicitly bound into the
-sandbox with +R/+W or configured through SKN_RO_BINDS/SKN_BINDS. Paths provided
-through +R/+W are validated by the mandatory SKN_PATH_CHECK command.
+sandbox with +R/+W/+T or configured through SKN_RO_BINDS/SKN_BINDS. Paths provided
+through +R/+W/+T are validated by the mandatory SKN_PATH_CHECK command.
 
 The skn command line interface is unusual: the command to be sandboxed comes
 first, followed by skn's own + options and then the command's arguments. This
@@ -32,6 +32,7 @@ it can be given after another command argument, or -- can be used.
 skn-options:
   +R PATH         bind PATH read-only into the sandbox
   +W PATH         bind PATH writable into the sandbox
+  +T PATH         bind directory PATH transient-writable; writes are discarded
   +E VAR=VALUE    set environment VAR to VALUE inside the sandbox
   +A ARG          prepend ARG to COMMAND arguments
   +N              enable network access
@@ -39,7 +40,7 @@ skn-options:
   --              stop parsing skn options
 
 Environment:
-  SKN_PATH_CHECK  mandatory command used to validate paths from +R/+W;
+  SKN_PATH_CHECK  mandatory command used to validate paths from +R/+W/+T;
                   executed directly with the path as its only argument. Set to
                   'true' to disable.
   SKN_RO_BINDS    colon-separated paths to bind read-only
@@ -115,6 +116,33 @@ add_bind() {
             exit 2
             ;;
     esac
+}
+
+add_transient_bind() {
+    local path=$1
+    local check=${2:-0}
+    local abs_path
+
+    if [[ -z $path ]]; then
+        echo "$progname: Empty path for +T" >&2
+        exit 2
+    fi
+
+    if [[ $check == 1 ]]; then
+        check_path "+T option" "$path"
+    fi
+
+    abs_path=$(realpath -s -e -- "$path") || {
+        echo "$progname: Invalid path for +T: $path" >&2
+        exit 2
+    }
+
+    if [[ ! -d $abs_path ]]; then
+        echo "$progname: +T requires an existing directory: $path" >&2
+        exit 2
+    fi
+
+    bwrap_args+=(--overlay-src "$abs_path" --tmp-overlay "$abs_path")
 }
 
 add_env_binds() {
@@ -207,7 +235,7 @@ while (($#)); do
             shift
             continue
             ;;
-        +R|+W)
+        +R|+W|+T)
             option=$1
             if (($# < 2)); then
                 echo "$progname: Missing argument for $option" >&2
@@ -216,7 +244,7 @@ while (($#)); do
             path=$2
             shift 2
             ;;
-        +R?*|+W?*)
+        +R?*|+W?*|+T?*)
             option=${1:0:2}
             path=${1:2}
             shift
@@ -254,7 +282,11 @@ while (($#)); do
             ;;
     esac
 
-    add_bind "$option" "$path" 1
+    if [[ $option == +T ]]; then
+        add_transient_bind "$path" 1
+    else
+        add_bind "$option" "$path" 1
+    fi
 done
 
 if ((preserve_env)); then

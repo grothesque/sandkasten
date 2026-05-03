@@ -73,7 +73,7 @@ In particular:
 - it does not defend against kernel vulnerabilities or sandbox escapes
 - it does not make malicious code safe to run with secrets deliberately bound into the sandbox
 - `+P` preserves the caller environment, which may expose secrets through environment variables
-- writable bind mounts allow sandboxed code to modify those paths
+- persistent writable bind mounts allow sandboxed code to modify those paths
 
 Use it as a pragmatic containment layer, not as a guarantee that hostile code is harmless.
 
@@ -88,6 +88,7 @@ Examples:
 ```sh
 skn make
 skn cargo +P +W . -- build
+skn make +T .
 skn curl +N -- https://example.com/
 ```
 
@@ -111,6 +112,7 @@ so `skn` can consume `+W ../data` before passing the remaining arguments to `foo
 ```text
 +R PATH         bind PATH read-only into the sandbox
 +W PATH         bind PATH writable into the sandbox
++T PATH         bind directory PATH transient-writable; writes are discarded
 +E VAR=VALUE    set environment VAR to VALUE inside the sandbox
 +A ARG          prepend ARG to COMMAND arguments
 +N              enable network access
@@ -124,10 +126,29 @@ Use `+N` to enable it.
 By default, the environment is mostly cleared.
 Use `+E` to pass specific values or `+P` to preserve the caller environment.
 
+Bind options take effect in the order they are given.
+For example, `+T . +W ./out` makes the current directory transient-writable,
+then makes `./out` persistently writable on top of it;
+reversing the options makes `./out` part of the transient overlay.
+
+## Transient writable overlays
+
+`+T PATH` exposes an existing directory as a transient writable overlay.
+Initial reads come from the host directory, but writes, deletes,
+and replacements are stored in temporary sandbox storage and discarded when the sandbox exits.
+This is useful for tools that insist on writing to a cache or source tree even when you do not want host data modified.
+
+`+T` is not a snapshot:
+concurrent host-side changes to the underlying directory are not hidden or made coherent,
+and reads can still expose secrets from that directory.
+Writes consume temporary sandbox storage.
+It also depends on `bubblewrap` and kernel overlayfs support,
+and may be unavailable with setuid bubblewrap.
+
 ## Path checks
 
 `skn` requires `SKN_PATH_CHECK` to be set.
-It names a command used to validate paths before they are exposed through `+R` or `+W`.
+It names a command used to validate paths before they are exposed through `+R`, `+W`, or `+T`.
 
 The command is executed directly, without shell evaluation,
 with the checked path as its only argument.
@@ -181,5 +202,5 @@ For integration-specific installation and usage notes, see the [Rust wrappers](r
 - `skn` options use uppercase letters with a leading `+` so they are less likely to collide with wrapped command options.
 - `+P` is useful for compatibility, but it may expose secrets from the caller’s environment.
 - Network access is opt-in with `+N`.
-- The synthetic sandbox filesystem is remounted read-only after setup. Writable access is limited to `/tmp` and explicit writable binds such as `+W` and `SKN_BINDS`; writes elsewhere should fail rather than appear to succeed transiently.
-- The launch current directory is not bound or selected explicitly by `skn`. If it is unavailable inside the sandbox, `bwrap` handles this using its documented fallback behavior (`$HOME` if available, otherwise `/`). Use `+R` or `+W` when the command needs access to the current directory or another checked path.
+- The synthetic sandbox filesystem is remounted read-only after setup. Persistent writable access is limited to explicit writable binds such as `+W` and `SKN_BINDS`; non-persistent writable access is limited to `/tmp` and explicit transient overlays such as `+T`. Writes elsewhere should fail rather than appear to succeed transiently.
+- The launch current directory is not bound or selected explicitly by `skn`. If it is unavailable inside the sandbox, `bwrap` handles this using its documented fallback behavior (`$HOME` if available, otherwise `/`). Use `+R`, `+W`, or `+T` when the command needs access to the current directory or another checked path.

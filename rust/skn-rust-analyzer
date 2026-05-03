@@ -8,6 +8,7 @@
 # e.g.:
 #
 #   skn-rust-analyzer +W ../dep
+#   skn-rust-analyzer +T ~/.cargo
 #   skn-rust-analyzer +N
 #
 # rust-analyzer itself is sandboxed.  Cargo, rustc, build scripts, proc macros,
@@ -55,10 +56,10 @@ while (( i <= $# )); do
             network=1
             break
             ;;
-        +R|+W|+E|+A)
+        +R|+W|+T|+E|+A)
             ((i+=2))
             ;;
-        +R?*|+W?*|+E?*|+A?*|+P)
+        +R?*|+W?*|+T?*|+E?*|+A?*|+P)
             ((++i))
             ;;
         *)

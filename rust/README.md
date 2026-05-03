@@ -61,6 +61,11 @@ Outside a detected workspace, it does not implicitly bind the current directory,
 so commands such as `cargo new foo` fail unless you explicitly grant writable access,
 for example with `skn-cargo +W. new foo`.
 
+Use `+T` when a directory should appear writable but host changes should be discarded.
+For example, `skn-cargo +T ~/.cargo build` lets Cargo and subprocesses write to a transient Cargo home overlay for that run,
+and `skn-cargo +T . test` lets tools write in the project tree without keeping their changes.
+`+T` still allows reads from the underlying directory, so it does not hide secrets.
+
 ## rust-analyzer
 
 `skn-rust-analyzer` runs rust-analyzer itself inside the sandbox.
