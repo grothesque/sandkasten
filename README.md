@@ -205,6 +205,16 @@ skn
 
 For integration-specific installation and usage notes, see the [Rust wrappers](rust/README.md) README.
 
+## Testing
+
+Run the test suite with:
+
+```sh
+./tests/run
+```
+
+See [`tests/README.md`](tests/README.md) for details.
+
 ## Notes
 
 - `skn` intentionally has a small interface.

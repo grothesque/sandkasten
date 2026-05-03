@@ -1,0 +1,59 @@
+#!/usr/bin/env bats
+# shellcheck shell=bash
+
+load 'helpers/common'
+
+@test '+S skips path checks and filesystem validation' {
+    run env -u SKN_PATH_CHECK "$SKN" true +S +R ./missing-ro +W ./missing-w +T ./missing-t
+
+    assert_success
+    assert_output_contains 'skn: command: true'
+    assert_output_contains 'skn: network disabled'
+    assert_output_contains 'skn: environment mostly cleared'
+    assert_output_contains 'skn: bwrap command:'
+    assert_output_contains '--ro-bind'
+    assert_output_contains '--bind'
+    assert_output_contains '--tmp-overlay'
+}
+
+@test '+S reports network, preserved environment, and prepended command args' {
+    run env -u SKN_PATH_CHECK "$SKN" echo +S +N +P +A -n -- hello
+
+    assert_success
+    assert_output_contains 'skn: command: echo -n hello'
+    assert_output_contains 'skn: network enabled'
+    assert_output_contains 'skn: environment preserved'
+    assert_output_contains '--share-net'
+}
+
+@test '+S still rejects malformed skn options' {
+    run env -u SKN_PATH_CHECK "$SKN" true +S +E 1BAD=value
+    assert_failure
+    assert_output_contains 'Invalid environment variable name'
+
+    run env -u SKN_PATH_CHECK "$SKN" true +S +W
+    assert_failure
+    assert_output_contains 'Missing argument for +W'
+}
+
+@test 'option-looking command is diagnosed as misplaced skn option' {
+    run "$SKN" +T. bash
+
+    assert_failure
+    assert_output_contains "COMMAND comes before skn options; got '+T.' as COMMAND"
+}
+
+@test '+S preserves user bind ordering' {
+    dir="$BATS_TEST_TMPDIR/project"
+    mkdir -p "$dir/out"
+
+    run env -u SKN_PATH_CHECK "$SKN" true +S +T "$dir" +W "$dir/out"
+    assert_success
+
+    overlay_line=$(printf '%s\n' "$output" | line_number_matching '--overlay-src')
+    bind_line=$(printf '%s\n' "$output" | line_number_matching "--bind $dir/out $dir/out")
+
+    [[ -n $overlay_line ]]
+    [[ -n $bind_line ]]
+    [[ $overlay_line -lt $bind_line ]]
+}
