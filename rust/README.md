@@ -56,6 +56,11 @@ skn-cargo +N update
 skn-cargo +N install ripgrep
 ```
 
+When `skn-cargo` detects a Cargo workspace, it binds that workspace writable.
+Outside a detected workspace, it does not implicitly bind the current directory,
+so commands such as `cargo new foo` fail unless you explicitly grant writable access,
+for example with `skn-cargo +W. new foo`.
+
 ## rust-analyzer
 
 `skn-rust-analyzer` runs rust-analyzer itself inside the sandbox.

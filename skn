@@ -273,6 +273,8 @@ else
     env_args+=("${env_set_args[@]}")
 fi
 
+bwrap_args+=(--remount-ro /)
+
 exec bwrap \
     "${bwrap_args[@]}" \
     "${env_args[@]}" \

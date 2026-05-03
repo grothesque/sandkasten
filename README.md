@@ -181,4 +181,5 @@ For integration-specific installation and usage notes, see the [Rust wrappers](r
 - `skn` options use uppercase letters with a leading `+` so they are less likely to collide with wrapped command options.
 - `+P` is useful for compatibility, but it may expose secrets from the caller’s environment.
 - Network access is opt-in with `+N`.
+- The synthetic sandbox filesystem is remounted read-only after setup. Writable access is limited to `/tmp` and explicit writable binds such as `+W` and `SKN_BINDS`; writes elsewhere should fail rather than appear to succeed transiently.
 - The launch current directory is not bound or selected explicitly by `skn`. If it is unavailable inside the sandbox, `bwrap` handles this using its documented fallback behavior (`$HOME` if available, otherwise `/`). Use `+R` or `+W` when the command needs access to the current directory or another checked path.
