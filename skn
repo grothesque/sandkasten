@@ -184,6 +184,13 @@ if [[ -z $cmd ]]; then
     exit 2
 fi
 
+case $cmd in
+    +N|+P|+R|+W|+T|+E|+A|+R?*|+W?*|+T?*|+E?*|+A?*)
+        echo "$progname: COMMAND comes before skn options; got '$cmd' as COMMAND" >&2
+        exit 2
+        ;;
+esac
+
 if [[ -z ${SKN_PATH_CHECK:-} ]]; then
     echo "$progname: SKN_PATH_CHECK is not set" >&2
     usage >&2
