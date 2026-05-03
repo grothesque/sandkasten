@@ -49,12 +49,14 @@ If you need Cargo registry credentials, prefer configuring Cargo to retrieve tok
 For example, Cargo supports `registry.global-credential-providers`,
 which can invoke a password manager or other helper to supply tokens when needed.
 
-With `+N`, network access is enabled and `CARGO_NET_OFFLINE` is not set:
+With `+N`, network access is enabled and the wrapper does not set `CARGO_NET_OFFLINE`:
 
 ```sh
 skn-cargo +N update
 skn-cargo +N install ripgrep
 ```
+
+Because the wrappers preserve the caller environment, an already-inherited `CARGO_NET_OFFLINE` value still applies even with `+N`.
 
 Use `+S` to show the generated sandbox command without running Cargo:
 
@@ -87,7 +89,8 @@ skn-rust-analyzer
 ```
 
 As with `skn-cargo`, network is disabled by default and `CARGO_NET_OFFLINE=true` is set.
-Use `+N` if rust-analyzer should have network access:
+Use `+N` to enable network access;
+the wrapper then does not set `CARGO_NET_OFFLINE`, though an already-inherited value still applies:
 
 ```sh
 skn-rust-analyzer +N

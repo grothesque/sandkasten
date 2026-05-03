@@ -18,7 +18,8 @@
 # Without +N, the wrapper asks skn to set CARGO_NET_OFFLINE=true inside the
 # sandbox.  This preserves the important separation between fetching
 # dependencies with network access and analyzing/building without it.  If +N is
-# given, network access is enabled and CARGO_NET_OFFLINE is not set.
+# given, network access is enabled and this wrapper does not set
+# CARGO_NET_OFFLINE.
 #
 # The detected Cargo workspace is bound writable because rust-analyzer and cargo
 # may need to write target files and other workspace-local state. If no Cargo
