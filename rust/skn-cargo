@@ -44,31 +44,24 @@ append_path_var() {
     esac
 }
 
-network=0
+# Parses skn’s initial +S header block. This delegates option parsing to skn
+# itself instead of mirroring skn’s option grammar here.
+network_enabled_from_skn_show() {
+    local line state=
 
-# Scan leading skn options only to decide whether skn will see +N.
-i=1
-while (( i <= $# )); do
-    arg=${!i}
-    case $arg in
-        --)
-            break
-            ;;
-        +N)
-            network=1
-            break
-            ;;
-        +R|+W|+T|+E|+A)
-            ((i+=2))
-            ;;
-        +R?*|+W?*|+T?*|+E?*|+A?*|+P|+S)
-            ((++i))
-            ;;
-        *)
-            break
-            ;;
+    while IFS= read -r line; do
+        [[ $line == skn:\ * ]] || break
+        case $line in
+            "skn: network "*) state=${line#"skn: network "}; break ;;
+        esac
+    done
+
+    case $state in
+        enabled) return 0 ;;
+        disabled) return 1 ;;
+        *) return 2 ;;
     esac
-done
+}
 
 # If they exist, make cargo home writable and rustup home readable.
 append_path_var SKN_BINDS "${CARGO_HOME:-$HOME/.cargo}"
@@ -86,8 +79,19 @@ if proj=$(cargo locate-project --workspace --message-format=plain 2>/dev/null); 
     skn_args+=( +W "$proj" )
 fi
 
-if (( network )); then
-    exec "${skn_args[@]}" "$@"
-else
-    exec "${skn_args[@]}" +E CARGO_NET_OFFLINE=true "$@"
+skn_show_status=0
+skn_show_output=$("${skn_args[@]}" +S "$@") || skn_show_status=$?
+if ((skn_show_status != 0)); then
+    exit "$skn_show_status"
 fi
+
+if network_enabled_from_skn_show <<<"$skn_show_output"; then
+    :
+else
+    case $? in
+        1) skn_args+=(+E CARGO_NET_OFFLINE=true) ;;
+        *) echo "${0##*/}: internal error parsing skn +S output" >&2; exit 2 ;;
+    esac
+fi
+
+exec "${skn_args[@]}" "$@"
