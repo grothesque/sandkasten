@@ -1,0 +1,282 @@
+#!/bin/bash
+
+set -euo pipefail
+
+progname="${0##*/}"
+
+usage() {
+    cat <<EOF
+Usage: $progname COMMAND [skn-options] [--] [COMMAND-args...]
+
+Run COMMAND inside a bwrap sandbox intended for untrusted code. The sandbox
+has a private /tmp, a mostly cleared environment unless +P is used, and no
+network access unless enabled with +N.
+
+The only host data bound by default is /usr and a few selected parts of /etc,
+all read-only. Other host data is not visible unless explicitly bound into the
+sandbox with +R/+W or configured through SKN_RO_BINDS/SKN_BINDS. Paths provided
+through +R/+W are validated by the mandatory SKN_PATH_CHECK command.
+
+The skn command line interface is unusual: the command to be sandboxed comes
+first, followed by skn's own + options and then the command's arguments. This
+keeps aliases and small wrappers transparent while putting skn's controls in a
+separate namespace from ordinary command options. For example
+
+alias foo='skn foo'
+
+Now, the foo alias will behave almost like the unwrapped foo command, only that
+it will run wrapped, and accept a few additional + options (if given at the
+beginning). If the unwrapped foo needs an argument that looks like a skn option,
+it can be given after another command argument, or -- can be used.
+
+skn-options:
+  +R PATH         bind PATH read-only into the sandbox
+  +W PATH         bind PATH writable into the sandbox
+  +E VAR=VALUE    set environment VAR to VALUE inside the sandbox
+  +A ARG          prepend ARG to COMMAND arguments
+  +N              enable network access
+  +P              preserve caller environment instead of clearing it
+  --              stop parsing skn options
+
+Environment:
+  SKN_PATH_CHECK  mandatory command used to validate paths from +R/+W;
+                  executed directly with the path as its only argument. Set to
+                  'true' to disable.
+  SKN_RO_BINDS    colon-separated paths to bind read-only
+  SKN_BINDS       colon-separated paths to bind writable
+EOF
+}
+
+add_env() {
+    local assignment=$1
+    local name value
+
+    if [[ $assignment != *=* ]]; then
+        echo "$progname: Invalid argument for +E: expected VAR=VALUE" >&2
+        usage >&2
+        exit 2
+    fi
+
+    name=${assignment%%=*}
+    value=${assignment#*=}
+
+    if [[ ! $name =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+        echo "$progname: Invalid environment variable name for +E: $name" >&2
+        exit 2
+    fi
+
+    env_set_args+=(--setenv "$name" "$value")
+}
+
+check_path() {
+    local label=$1
+    local path=$2
+
+    "$SKN_PATH_CHECK" "$path" || {
+        echo "$progname: SKN_PATH_CHECK rejected $path ($label) for sharing with sandbox" >&2
+        exit 2
+    }
+}
+
+add_ro_bind_if_exists() {
+    local path=$1
+
+    if [[ -e $path ]]; then
+        bwrap_args+=(--ro-bind "$path" "$path")
+    fi
+}
+
+add_bind() {
+    local option=$1
+    local path=$2
+    local check=${3:-0}
+    local abs_path
+
+    if [[ -z $path ]]; then
+        echo "$progname: Empty path for $option" >&2
+        exit 2
+    fi
+
+    if [[ $check == 1 ]]; then
+        check_path "$option option" "$path"
+    fi
+
+    abs_path=$(realpath -s -e -- "$path") || {
+        echo "$progname: Invalid path for $option: $path" >&2
+        exit 2
+    }
+
+
+    case $option in
+        +R) bwrap_args+=(--ro-bind "$abs_path" "$abs_path") ;;
+        +W) bwrap_args+=(--bind "$abs_path" "$abs_path") ;;
+        *)
+            echo "$progname: Internal error: invalid bind option: $option" >&2
+            exit 2
+            ;;
+    esac
+}
+
+add_env_binds() {
+    local var_name=$1
+    local option=$2
+    local value path
+
+    [[ -v $var_name ]] || return 0
+    value=${!var_name}
+    [[ -n $value ]] || return 0
+
+    while [[ $value == *:* ]]; do
+        path=${value%%:*}
+        add_bind "$option" "$path" 0
+        value=${value#*:}
+    done
+
+    add_bind "$option" "$value" 0
+}
+
+if (($# == 0)); then
+    usage >&2
+    exit 2
+fi
+
+case $1 in
+    -h|--help)
+        usage
+        exit 0
+        ;;
+esac
+
+cmd=$1
+shift
+
+if [[ -z $cmd ]]; then
+    echo "$progname: Empty COMMAND" >&2
+    usage >&2
+    exit 2
+fi
+
+if [[ -z ${SKN_PATH_CHECK:-} ]]; then
+    echo "$progname: SKN_PATH_CHECK is not set" >&2
+    usage >&2
+    exit 2
+fi
+
+preserve_env=0
+command_args=()
+env_set_args=()
+
+bwrap_args=(
+    --unshare-all
+    --new-session
+    --die-with-parent
+)
+
+# Basic runtime filesystem
+bwrap_args+=(
+    --ro-bind /usr /usr
+    --symlink usr/bin /bin
+    --symlink usr/lib /lib
+    --symlink usr/lib64 /lib64
+    --proc /proc
+    --dev /dev
+    --tmpfs /tmp
+)
+add_ro_bind_if_exists /etc/alternatives
+add_ro_bind_if_exists /etc/ssl/certs
+add_ro_bind_if_exists /etc/resolv.conf
+add_ro_bind_if_exists /etc/manpath.config
+
+add_env_binds SKN_RO_BINDS +R
+add_env_binds SKN_BINDS +W
+
+# Parse wrapper options. The remaining arguments are for the command.
+while (($#)); do
+    case $1 in
+        --)
+            shift
+            break
+            ;;
+        +N)
+            bwrap_args+=(--share-net)
+            shift
+            continue
+            ;;
+        +P)
+            preserve_env=1
+            shift
+            continue
+            ;;
+        +R|+W)
+            option=$1
+            if (($# < 2)); then
+                echo "$progname: Missing argument for $option" >&2
+                exit 2
+            fi
+            path=$2
+            shift 2
+            ;;
+        +R?*|+W?*)
+            option=${1:0:2}
+            path=${1:2}
+            shift
+            ;;
+        +E)
+            if (($# < 2)); then
+                echo "$progname: Missing argument for +E" >&2
+                exit 2
+            fi
+            add_env "$2"
+            shift 2
+            continue
+            ;;
+        +E?*)
+            add_env "${1:2}"
+            shift
+            continue
+            ;;
+        +A)
+            if (($# < 2)); then
+                echo "$progname: Missing argument for +A" >&2
+                exit 2
+            fi
+            command_args+=("$2")
+            shift 2
+            continue
+            ;;
+        +A?*)
+            command_args+=("${1:2}")
+            shift
+            continue
+            ;;
+        *)
+            break
+            ;;
+    esac
+
+    add_bind "$option" "$path" 1
+done
+
+if ((preserve_env)); then
+    env_args=("${env_set_args[@]}")
+else
+    env_args=(
+        --clearenv
+        --setenv SHELL /bin/bash
+    )
+
+    # Preserve selected environment variables.
+    for key in PATH HOME USER LOGNAME TERM COLORTERM LANG "${!LC_@}"; do
+        [[ -v $key ]] && env_args+=(--setenv "$key" "${!key}")
+    done
+
+    env_args+=("${env_set_args[@]}")
+fi
+
+exec bwrap \
+    "${bwrap_args[@]}" \
+    "${env_args[@]}" \
+    -- \
+    "$cmd" \
+    "${command_args[@]}" \
+    "$@"

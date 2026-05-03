@@ -1,0 +1,92 @@
+#!/bin/bash
+#
+# Run cargo under skn with defaults suitable for building untrusted projects.
+#
+# This wrapper intentionally stays small and mostly lets skn parse its own
+# options.  Leading skn + options may be given before cargo arguments, e.g.:
+#
+#   skn-cargo +N fetch
+#   skn-cargo +W ../dep build
+#
+# Without +N, the wrapper asks skn to set CARGO_NET_OFFLINE=true inside the
+# sandbox.  This preserves the important separation between fetching
+# dependencies with network access and building without it:
+#
+#   skn-cargo +N fetch
+#   skn-cargo build
+#
+# Cargo arguments are otherwise passed through unchanged, so syntax such as
+# +toolchain remains Cargo’s concern.  The only overlap is with leading values
+# that match skn’s own + option syntax: for example, +Wsomething is parsed as a
+# writable bind, not as a custom Cargo toolchain.  Pass such values after -- if
+# needed.
+#
+# For convenience, define aliases or shell functions, for example:
+#
+#   alias cargo=skn-cargo
+#   alias cargo-fetch='skn-cargo +N fetch'
+#   alias cargo-update='skn-cargo +N update'
+
+set -eu
+
+append_path_var() {
+    local var_name=$1
+    local path=$2
+    local value
+
+    [[ -e $path ]] || return 0
+
+    value=${!var_name:-}
+    case ":$value:" in
+        *:"$path":*) ;;
+        *) printf -v "$var_name" '%s' "${value:+$value:}$path" ;;
+    esac
+}
+
+network=0
+
+# Scan leading skn options only to decide whether skn will see +N.
+i=1
+while (( i <= $# )); do
+    arg=${!i}
+    case $arg in
+        --)
+            break
+            ;;
+        +N)
+            network=1
+            break
+            ;;
+        +R|+W|+E|+A)
+            ((i+=2))
+            ;;
+        +R?*|+W?*|+E?*|+A?*|+P)
+            ((++i))
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+# If they exist, make cargo home writable and rustup home readable.
+append_path_var SKN_BINDS "${CARGO_HOME:-$HOME/.cargo}"
+append_path_var SKN_RO_BINDS "${RUSTUP_HOME:-$HOME/.rustup}"
+export SKN_BINDS SKN_RO_BINDS
+
+skn_args=(
+    skn
+    cargo
+    +P
+)
+
+if proj=$(cargo locate-project --workspace --message-format=plain 2>/dev/null); then
+    proj=$(dirname -- "$proj")
+    skn_args+=( +W "$proj" )
+fi
+
+if (( network )); then
+    exec "${skn_args[@]}" "$@"
+else
+    exec "${skn_args[@]}" +E CARGO_NET_OFFLINE=true "$@"
+fi

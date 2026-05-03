@@ -1,0 +1,91 @@
+#!/bin/bash
+#
+# Run rust-analyzer under skn with defaults suitable for working on untrusted
+# projects.
+#
+# This wrapper intentionally stays small and mostly lets skn parse its own
+# options.  Leading skn + options may be given before rust-analyzer arguments,
+# e.g.:
+#
+#   skn-rust-analyzer +W ../dep
+#   skn-rust-analyzer +N
+#
+# rust-analyzer itself is sandboxed.  Cargo, rustc, build scripts, proc macros,
+# and tests launched by rust-analyzer inherit that sandbox, regardless of how
+# rust-analyzer chooses to locate cargo.
+#
+# Without +N, the wrapper asks skn to set CARGO_NET_OFFLINE=true inside the
+# sandbox.  This preserves the important separation between fetching
+# dependencies with network access and analyzing/building without it.  If +N is
+# given, network access is enabled and CARGO_NET_OFFLINE is not set.
+#
+# The detected Cargo workspace, or the current directory if no workspace is
+# detected, is bound writable because rust-analyzer and cargo may need to write
+# target files and other workspace-local state.
+
+set -eu
+
+append_path_var() {
+    local var_name=$1
+    local path=$2
+    local value
+
+    [[ -e $path ]] || return 0
+
+    value=${!var_name:-}
+    case ":$value:" in
+        *:"$path":*) ;;
+        *) printf -v "$var_name" '%s' "${value:+$value:}$path" ;;
+    esac
+}
+
+network=0
+
+# Scan leading skn options only to decide whether skn will see +N.
+i=1
+while (( i <= $# )); do
+    arg=${!i}
+    case $arg in
+        --)
+            break
+            ;;
+        +N)
+            network=1
+            break
+            ;;
+        +R|+W|+E|+A)
+            ((i+=2))
+            ;;
+        +R?*|+W?*|+E?*|+A?*|+P)
+            ((++i))
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+# Determine the workspace directory.  Use the current directory as fallback.
+if workspace=$(cargo locate-project --workspace --message-format=plain 2>/dev/null); then
+    workspace=$(dirname -- "$workspace")
+else
+    workspace=$(pwd)
+fi
+
+# If they exist, make cargo home writable and rustup home readable.
+append_path_var SKN_BINDS "${CARGO_HOME:-$HOME/.cargo}"
+append_path_var SKN_RO_BINDS "${RUSTUP_HOME:-$HOME/.rustup}"
+export SKN_BINDS SKN_RO_BINDS
+
+skn_args=(
+    skn
+    rust-analyzer
+    +P
+    +W "$workspace"
+)
+
+if (( network )); then
+    exec "${skn_args[@]}" "$@"
+else
+    exec "${skn_args[@]}" +E CARGO_NET_OFFLINE=true "$@"
+fi
