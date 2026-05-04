@@ -12,11 +12,13 @@ Run COMMAND inside a bwrap sandbox intended for untrusted code. The sandbox
 has a private /tmp, a mostly cleared environment unless +P is used, and no
 network access unless enabled with +N.
 
-The only host data bound by default is /usr and a few selected parts of /etc,
-all read-only. Other host data is not visible unless explicitly bound into the
-sandbox with +R/+W/+T or configured read-only through SKN_RO_BINDS. When not
-using +S or +I, paths provided through +R/+W/+T are validated by the
-mandatory SKN_PATH_CHECK command.
+The only host data bound by default is /usr, optional system runtime paths
+such as /bin and /lib, and a few selected parts of /etc, all read-only. DNS
+configuration and common public CA root locations are added only with +N.
+Other host data is not visible unless explicitly bound into the sandbox with
++R/+W/+T or configured read-only through SKN_RO_BINDS. When not using +S or
++I, paths provided through +R/+W/+T are validated by the mandatory
+SKN_PATH_CHECK command.
 
 The skn command line interface is unusual: the command to be sandboxed comes
 first, followed by skn's own + options and then the command's arguments. This
@@ -151,31 +153,48 @@ check_path() {
     }
 }
 
-add_ro_bind_if_exists() {
+add_ro_bind_try() {
     local path=$1
 
-    if [[ -e $path ]]; then
-        add_bwrap --ro-bind "$path" "$path"
-    fi
+    add_bwrap --ro-bind-try "$path" "$path"
 }
 
-add_default_bwrap_setup() {
+add_base_bwrap_setup() {
     add_bwrap --unshare-all
     add_bwrap --new-session
     add_bwrap --die-with-parent
 
     # Basic runtime filesystem
-    add_bwrap --ro-bind /usr /usr
-    add_bwrap --symlink usr/bin /bin
-    add_bwrap --symlink usr/lib /lib
-    add_bwrap --symlink usr/lib64 /lib64
     add_bwrap --proc /proc
     add_bwrap --dev /dev
     add_bwrap --tmpfs /tmp
-    add_ro_bind_if_exists /etc/alternatives
-    add_ro_bind_if_exists /etc/ssl/certs
-    add_ro_bind_if_exists /etc/resolv.conf
-    add_ro_bind_if_exists /etc/manpath.config
+    add_bwrap --ro-bind /usr /usr
+    add_ro_bind_try /bin
+    add_ro_bind_try /sbin
+    add_ro_bind_try /lib
+    add_ro_bind_try /lib64
+    add_ro_bind_try /lib32
+
+    # Optional distro/system integration files. These are deliberately narrow
+    # read-only binds; missing paths are ignored by bubblewrap.
+    add_ro_bind_try /etc/alternatives
+    add_ro_bind_try /etc/manpath.config
+    add_ro_bind_try /etc/man_db.conf
+    add_ro_bind_try /etc/man.conf
+}
+
+add_network_bwrap_setup() {
+    add_ro_bind_try /etc/resolv.conf
+
+    # Common public CA root locations, based on Go’s Linux x509 search paths.
+    # Bind certificate directories as directories, and bind bundle-file paths
+    # that are not covered by those directory binds separately.
+    add_ro_bind_try /etc/ssl/certs
+    add_ro_bind_try /etc/pki/tls/certs
+    add_ro_bind_try /etc/ssl/ca-bundle.pem
+    add_ro_bind_try /etc/pki/tls/cacert.pem
+    add_ro_bind_try /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+    add_ro_bind_try /etc/ssl/cert.pem
 }
 
 queue_bind() {
@@ -398,9 +417,10 @@ if ((! show_mode)) && [[ -z ${SKN_PATH_CHECK:-} ]]; then
     exit 2
 fi
 
-add_default_bwrap_setup
+add_base_bwrap_setup
 
 if ((network)); then
+    add_network_bwrap_setup
     add_bwrap --share-net
 fi
 

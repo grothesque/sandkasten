@@ -28,6 +28,41 @@ load 'helpers/common'
     assert_output_contains '--share-net'
 }
 
+@test '+S shows default optional system binds without requiring paths to exist' {
+    run env -u SKN_PATH_CHECK "$SKN" true +S
+
+    assert_success
+    assert_output_contains '--ro-bind /usr /usr'
+    assert_output_contains '--ro-bind-try /bin /bin'
+    assert_output_contains '--ro-bind-try /sbin /sbin'
+    assert_output_contains '--ro-bind-try /etc/alternatives /etc/alternatives'
+    assert_output_contains '--ro-bind-try /etc/manpath.config /etc/manpath.config'
+    assert_output_contains '--ro-bind-try /etc/man_db.conf /etc/man_db.conf'
+    assert_output_contains '--ro-bind-try /etc/man.conf /etc/man.conf'
+    assert_output_not_contains '--symlink usr/bin /bin'
+}
+
+@test '+S only includes DNS and CA root binds when network is enabled' {
+    run env -u SKN_PATH_CHECK "$SKN" true +S
+
+    assert_success
+    assert_output_not_contains '/etc/resolv.conf'
+    assert_output_not_contains '/etc/ssl/certs'
+    assert_output_not_contains '/etc/hosts'
+
+    run env -u SKN_PATH_CHECK "$SKN" true +S +N
+
+    assert_success
+    assert_output_contains '--ro-bind-try /etc/resolv.conf /etc/resolv.conf'
+    assert_output_contains '--ro-bind-try /etc/ssl/certs /etc/ssl/certs'
+    assert_output_contains '--ro-bind-try /etc/pki/tls/certs /etc/pki/tls/certs'
+    assert_output_contains '--ro-bind-try /etc/ssl/ca-bundle.pem /etc/ssl/ca-bundle.pem'
+    assert_output_contains '--ro-bind-try /etc/pki/tls/cacert.pem /etc/pki/tls/cacert.pem'
+    assert_output_contains '--ro-bind-try /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem'
+    assert_output_contains '--ro-bind-try /etc/ssl/cert.pem /etc/ssl/cert.pem'
+    assert_output_not_contains '/etc/hosts'
+}
+
 @test '+I prints only the info header and skips path checks and filesystem validation' {
     run env -u SKN_PATH_CHECK "$SKN" true +I +R ./missing-ro +W ./missing-w +T ./missing-t
 

@@ -39,7 +39,7 @@ The default sandbox has:
 - no network access
 - a private `/tmp`
 - a mostly cleared environment
-- read-only access to `/usr` and selected `/etc` files
+- read-only access to `/usr`, optional system runtime paths such as `/bin` and `/lib`, and selected `/etc` files
 - no access to the rest of the host filesystem unless explicitly configured
 
 The suite also includes integrations for common tools:
@@ -124,6 +124,7 @@ so `skn` can consume `+W ../data` before passing the remaining arguments to `foo
 
 By default, network access is disabled.
 Use `+N` to enable it.
+With `+N`, `skn` also adds read-only binds for DNS configuration and common public CA root locations so ordinary HTTPS clients can work without exposing broader host state such as `/etc/hosts`.
 
 By default, the environment is mostly cleared.
 Use `+E` to pass specific values or `+P` to preserve the caller environment.
@@ -193,6 +194,20 @@ but reject `$HOME` itself.
 The checker is responsible for applying the full path policy,
 including any desired canonicalization or symlink dereferencing;
 `skn` deliberately does not hardcode those policy decisions.
+
+## Built-in system binds
+
+`skn` always binds `/usr` read-only.
+It also tries to bind common runtime compatibility paths such as `/bin`,
+`/sbin`, `/lib`, `/lib64`, and `/lib32` read-only when they exist.
+This avoids assuming a particular merged-`/usr` layout.
+
+A small set of optional system configuration paths is also tried read-only when present:
+`/etc/alternatives`, `/etc/manpath.config`, `/etc/man_db.conf`, and `/etc/man.conf`.
+
+When `+N` is used, `skn` additionally tries read-only binds for `/etc/resolv.conf` and common Linux public CA root locations used by TLS libraries.
+It intentionally does not bind host `/etc/hosts` by default because that can expose local hostnames and network aliases;
+add it explicitly with `+R /etc/hosts` or trusted configuration if needed.
 
 ## Environment-configured binds
 
