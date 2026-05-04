@@ -182,17 +182,14 @@ including any desired canonicalization or symlink dereferencing;
 
 ## Environment-configured binds
 
-Additional persistent binds can be configured with colon-separated environment variables:
+Additional read-only binds can be configured with a colon-separated environment variable:
 
 ```sh
 export SKN_RO_BINDS="$HOME/.rustup:$HOME/.cargo/bin"
-export SKN_BINDS="$HOME/.cargo"
 ```
 
-- `SKN_RO_BINDS` paths are bound read-only.
-- `SKN_BINDS` paths are bound writable.
-
-Paths from these variables are not checked by `SKN_PATH_CHECK`;
+`SKN_RO_BINDS` paths are bound read-only.
+Paths from this variable are not checked by `SKN_PATH_CHECK`;
 they are treated as trusted configuration chosen by the user.
 
 ## Installing
@@ -221,5 +218,5 @@ See [`tests/README.md`](tests/README.md) for details.
 - `skn` options use uppercase letters with a leading `+` so they are less likely to collide with wrapped command options.
 - `+P` is useful for compatibility, but it may expose secrets from the caller’s environment.
 - Network access is opt-in with `+N`.
-- The synthetic sandbox filesystem is remounted read-only after setup. Persistent writable access is limited to explicit writable binds such as `+W` and `SKN_BINDS`; non-persistent writable access is limited to `/tmp` and explicit transient overlays such as `+T`. Writes elsewhere should fail rather than appear to succeed transiently.
+- The synthetic sandbox filesystem is remounted read-only after setup. Persistent writable access is limited to explicit writable binds such as `+W`; non-persistent writable access is limited to `/tmp` and explicit transient overlays such as `+T`. Writes elsewhere should fail rather than appear to succeed transiently.
 - The launch current directory is not bound or selected explicitly by `skn`. If it is unavailable inside the sandbox, `bwrap` handles this using its documented fallback behavior (`$HOME` if available, otherwise `/`). Use `+R`, `+W`, or `+T` when the command needs access to the current directory or another checked path.

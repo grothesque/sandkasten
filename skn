@@ -14,7 +14,7 @@ network access unless enabled with +N.
 
 The only host data bound by default is /usr and a few selected parts of /etc,
 all read-only. Other host data is not visible unless explicitly bound into the
-sandbox with +R/+W/+T or configured through SKN_RO_BINDS/SKN_BINDS. When not
+sandbox with +R/+W/+T or configured read-only through SKN_RO_BINDS. When not
 using +S, paths provided through +R/+W/+T are validated by the mandatory
 SKN_PATH_CHECK command.
 
@@ -46,7 +46,6 @@ Environment:
                   from +R/+W/+T; executed directly with the path as its only
                   argument. Set to 'true' to disable.
   SKN_RO_BINDS    colon-separated paths to bind read-only
-  SKN_BINDS       colon-separated paths to bind writable
 EOF
 }
 
@@ -194,9 +193,8 @@ emit_queued_binds() {
     done
 }
 
-queue_env_binds() {
+queue_env_ro_binds() {
     local var_name=$1
-    local option=$2
     local value path
 
     [[ -v $var_name ]] || return 0
@@ -205,11 +203,11 @@ queue_env_binds() {
 
     while [[ $value == *:* ]]; do
         path=${value%%:*}
-        queue_bind "$option" "$path" 0
+        queue_bind +R "$path" 0
         value=${value#*:}
     done
 
-    queue_bind "$option" "$value" 0
+    queue_bind +R "$value" 0
 }
 
 if (($# == 0)); then
@@ -266,8 +264,7 @@ add_ro_bind_if_exists /etc/ssl/certs
 add_ro_bind_if_exists /etc/resolv.conf
 add_ro_bind_if_exists /etc/manpath.config
 
-queue_env_binds SKN_RO_BINDS +R
-queue_env_binds SKN_BINDS +W
+queue_env_ro_binds SKN_RO_BINDS
 
 # Parse wrapper options. The remaining arguments are for the command.
 while (($#)); do

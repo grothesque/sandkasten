@@ -45,6 +45,8 @@ the Rust wrappers pass `+P` to `skn` and therefore preserve the caller environme
 Be aware that untrusted build scripts, proc macros, tests,
 and related subprocesses may be able to read environment variables containing secrets.
 They also bind Cargo home writable when it exists, which may expose Cargo credentials or allow persistent changes to Cargo configuration/cache state.
+This bind, and the read-only rustup home bind when present,
+are passed as explicit `skn` options so they are visible with `+S` and checked by `skn`.
 If you need Cargo registry credentials, prefer configuring Cargo to retrieve tokens on demand from an external credential provider instead of storing tokens directly in Cargo home.
 For example, Cargo supports `registry.global-credential-providers`,
 which can invoke a password manager or other helper to supply tokens when needed.

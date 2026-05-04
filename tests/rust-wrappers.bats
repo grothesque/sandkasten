@@ -85,6 +85,9 @@ EOF
     chmod +x "$fake_bin/cargo"
 
     export PATH="$fake_bin:$PATH"
+    export HOME="$BATS_TEST_TMPDIR/home"
+    mkdir -p "$HOME"
+    unset CARGO_HOME RUSTUP_HOME
     export FAKE_SKN_SHOW_RESULT=disabled
     export FAKE_CARGO_LOCATE=fail
 }
@@ -120,6 +123,26 @@ assert_args_not_contain() {
     fi
 }
 
+assert_args_contain_pair() {
+    local lines=$1
+    local expected_option=$2
+    local expected_path=$3
+    local -a argv
+    local i
+
+    mapfile -t argv <"$lines"
+    for ((i = 0; i + 1 < ${#argv[@]}; ++i)); do
+        if [[ ${argv[i]} == "$expected_option" && ${argv[i + 1]} == "$expected_path" ]]; then
+            return 0
+        fi
+    done
+
+    printf 'expected args to contain pair: %s %s\n' "$expected_option" "$expected_path" >&2
+    printf 'args:\n' >&2
+    sed 's/^/  /' "$lines" >&2
+    return 1
+}
+
 @test 'skn-cargo adds offline mode and writable workspace when network is disabled' {
     workspace="$BATS_TEST_TMPDIR/workspace"
     mkdir -p "$workspace"
@@ -153,6 +176,18 @@ assert_args_not_contain() {
     assert_args_contain "$args" '+nightly'
     assert_args_contain "$args" 'build'
     assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
+}
+
+@test 'skn-cargo adds home binds as explicit skn options when present' {
+    mkdir -p "$HOME/.cargo" "$HOME/.rustup"
+
+    run "$SKN_CARGO" build
+    assert_success
+
+    args="$BATS_TEST_TMPDIR/final.lines"
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+    assert_args_contain_pair "$args" '+W' "$HOME/.cargo"
+    assert_args_contain_pair "$args" '+R' "$HOME/.rustup"
 }
 
 @test 'Rust wrappers surface skn +S failures and malformed headers' {

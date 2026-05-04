@@ -31,22 +31,17 @@ set -euo pipefail
 
 progname="${0##*/}"
 
-append_path_var() {
-    local var_name=$1
+append_bind_if_exists() {
+    local option=$1
     local path=$2
-    local value
 
     [[ -n $path && -e $path ]] || return 0
 
-    value=${!var_name:-}
-    case ":$value:" in
-        *:"$path":*) ;;
-        *) printf -v "$var_name" '%s' "${value:+$value:}$path" ;;
-    esac
+    skn_args+=("$option" "$path")
 }
 
-append_default_home_path_var() {
-    local var_name=$1
+append_default_home_bind() {
+    local option=$1
     local override_var_name=$2
     local default_basename=$3
     local path=
@@ -57,7 +52,7 @@ append_default_home_path_var() {
         path=$HOME/$default_basename
     fi
 
-    append_path_var "$var_name" "$path"
+    append_bind_if_exists "$option" "$path"
 }
 
 # Parses skn’s initial +S header block. This delegates option parsing to skn
@@ -93,9 +88,8 @@ else
 fi
 
 # If they exist, make cargo home writable and rustup home readable.
-append_default_home_path_var SKN_BINDS CARGO_HOME .cargo
-append_default_home_path_var SKN_RO_BINDS RUSTUP_HOME .rustup
-export SKN_BINDS SKN_RO_BINDS
+append_default_home_bind +W CARGO_HOME .cargo
+append_default_home_bind +R RUSTUP_HOME .rustup
 
 skn_show_status=0
 skn_show_output=$("${skn_args[@]}" +S "$@") || skn_show_status=$?
