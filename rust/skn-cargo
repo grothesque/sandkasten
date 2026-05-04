@@ -18,9 +18,9 @@
 #
 # Cargo arguments are otherwise passed through unchanged, so syntax such as
 # +toolchain remains Cargo’s concern.  The only overlap is with leading values
-# that match skn’s own + option syntax: for example, +Wsomething is parsed as a
-# writable bind, not as a custom Cargo toolchain.  Pass such values after -- if
-# needed.
+# that match skn’s current or reserved + option syntax: for example,
+# +Wsomething is parsed as a writable bind, and +Xsomething is rejected as a
+# reserved skn option.  Pass such values after -- if needed.
 #
 # For convenience, define aliases or shell functions, for example:
 #

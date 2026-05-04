@@ -68,6 +68,28 @@ load 'helpers/common'
     assert_output_contains "COMMAND comes before skn options; got '+T.' as COMMAND"
 }
 
+@test 'unknown uppercase skn options are reserved' {
+    run env -u SKN_PATH_CHECK "$SKN" true +I +Qfuture
+
+    assert_failure
+    assert_output_contains 'Unknown or reserved skn option: +Qfuture'
+    assert_output_contains 'use -- before command arguments that start with +<uppercase>'
+}
+
+@test 'reserved-looking command arguments can be passed after --' {
+    run env -u SKN_PATH_CHECK "$SKN" cargo +I -- +Xtoolchain build
+
+    assert_success
+    assert_output_contains 'skn: sandboxed command: cargo +Xtoolchain build'
+}
+
+@test 'lowercase plus command arguments still stop skn option parsing' {
+    run env -u SKN_PATH_CHECK "$SKN" cargo +I +nightly build
+
+    assert_success
+    assert_output_contains 'skn: sandboxed command: cargo +nightly build'
+}
+
 @test '+S preserves user bind ordering' {
     dir="$BATS_TEST_TMPDIR/project"
     mkdir -p "$dir/out"

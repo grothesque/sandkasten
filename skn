@@ -42,6 +42,9 @@ skn-options:
   +I              show only the parsed skn info header, then exit
   --              stop parsing skn options
 
+While skn is parsing options, unrecognized +<uppercase> forms are reserved
+for future skn options; use -- before command arguments that look like that.
+
 Environment:
   SKN_PATH_CHECK  mandatory unless +S or +I is used; command used to validate
                   paths from +R/+W/+T; executed directly with the path as its
@@ -272,7 +275,7 @@ if [[ -z $cmd ]]; then
 fi
 
 case $cmd in
-    +N|+P|+S|+I|+R|+W|+T|+E|+A|+R?*|+W?*|+T?*|+E?*|+A?*)
+    +[A-Z]*)
         echo "$progname: COMMAND comes before skn options; got '$cmd' as COMMAND" >&2
         exit 2
         ;;
@@ -292,6 +295,11 @@ bwrap_display_lines=()
 queue_env_ro_binds SKN_RO_BINDS
 
 # Parse wrapper options. The remaining arguments are for the command.
+#
+# Note: if we ever decide to support further optional sandbox relaxations, let
+# us consider adding a master option (perhaps +X for relax), e.g. +X ipc.  The
+# current +N and +P can then remain aliases for, respectively, +X net and +X
+# env.
 while (($#)); do
     case $1 in
         --)
@@ -364,6 +372,11 @@ while (($#)); do
             command_args+=("${1:2}")
             shift
             continue
+            ;;
+        +[A-Z]*)
+            echo "$progname: Unknown or reserved skn option: $1" >&2
+            echo "$progname: use -- before command arguments that start with +<uppercase>" >&2
+            exit 2
             ;;
         *)
             break

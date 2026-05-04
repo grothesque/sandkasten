@@ -38,7 +38,7 @@ skn-cargo build
 ```
 
 Without `+N`, `skn-cargo` sets `CARGO_NET_OFFLINE=true` inside the sandbox.
-Cargo arguments are otherwise passed through unchanged.
+Cargo arguments are otherwise passed through unchanged, except that leading arguments in `skn`’s current or reserved uppercase `+` option namespace must be passed after `--`.
 
 For compatibility with toolchains and project-specific Cargo configuration,
 the Rust wrappers pass `+P` to `skn` and therefore preserve the caller environment by default.

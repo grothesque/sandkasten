@@ -128,6 +128,9 @@ Use `+N` to enable it.
 By default, the environment is mostly cleared.
 Use `+E` to pass specific values or `+P` to preserve the caller environment.
 
+While `skn` is parsing its option prefix, unrecognized arguments that start with `+` followed by an uppercase ASCII letter are rejected as reserved for future `skn` options.
+Use `--` before command arguments that look like reserved `skn` options.
+
 Use `+S` to show the setup without running the command.
 It parses the command line, prints the sandboxed command, network and environment mode,
 a shell-quoted `skn` invocation, and a multi-line shell-quoted `bwrap` invocation, then exits.
