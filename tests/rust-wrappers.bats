@@ -8,46 +8,46 @@ setup() {
     fake_bin="$BATS_TEST_TMPDIR/bin"
     mkdir -p "$fake_bin"
 
-    FAKE_SKN_SHOW_ARGS="$BATS_TEST_TMPDIR/skn-show.args"
+    FAKE_SKN_INFO_ARGS="$BATS_TEST_TMPDIR/skn-info.args"
     FAKE_SKN_FINAL_ARGS="$BATS_TEST_TMPDIR/skn-final.args"
-    export FAKE_SKN_SHOW_ARGS FAKE_SKN_FINAL_ARGS
+    export FAKE_SKN_INFO_ARGS FAKE_SKN_FINAL_ARGS
 
     cat >"$fake_bin/skn" <<'EOF'
 #!/bin/bash
 set -euo pipefail
 
-has_show=0
+has_info=0
 for arg in "$@"; do
-    if [[ $arg == +S ]]; then
-        has_show=1
+    if [[ $arg == +I ]]; then
+        has_info=1
         break
     fi
 done
 
-if ((has_show)); then
-    printf '%s\0' "$@" >"${FAKE_SKN_SHOW_ARGS:?}"
-    case ${FAKE_SKN_SHOW_RESULT:-disabled} in
+if ((has_info)); then
+    printf '%s\0' "$@" >"${FAKE_SKN_INFO_ARGS:?}"
+    case ${FAKE_SKN_INFO_RESULT:-disabled} in
         disabled)
-            echo 'skn: command: fake'
+            echo 'skn: sandboxed command: fake'
             echo 'skn: network disabled'
             echo 'skn: environment preserved'
-            echo 'skn: bwrap command:'
+            echo 'skn: equivalent invocation: fake'
             ;;
         enabled)
-            echo 'skn: command: fake'
+            echo 'skn: sandboxed command: fake'
             echo 'skn: network enabled'
             echo 'skn: environment preserved'
-            echo 'skn: bwrap command:'
+            echo 'skn: equivalent invocation: fake'
             ;;
         malformed)
-            echo 'skn: command: fake'
+            echo 'skn: sandboxed command: fake'
             echo 'not a skn header line'
             ;;
         fail)
-            exit "${FAKE_SKN_SHOW_STATUS:-37}"
+            exit "${FAKE_SKN_INFO_STATUS:-37}"
             ;;
         *)
-            echo "fake skn: unknown FAKE_SKN_SHOW_RESULT" >&2
+            echo "fake skn: unknown FAKE_SKN_INFO_RESULT" >&2
             exit 99
             ;;
     esac
@@ -88,7 +88,7 @@ EOF
     export HOME="$BATS_TEST_TMPDIR/home"
     mkdir -p "$HOME"
     unset CARGO_HOME RUSTUP_HOME
-    export FAKE_SKN_SHOW_RESULT=disabled
+    export FAKE_SKN_INFO_RESULT=disabled
     export FAKE_CARGO_LOCATE=fail
 }
 
@@ -153,6 +153,10 @@ assert_args_contain_pair() {
     run "$SKN_CARGO" build
     assert_success
 
+    info_args="$BATS_TEST_TMPDIR/info.lines"
+    write_args_lines "$FAKE_SKN_INFO_ARGS" "$info_args"
+    assert_args_contain "$info_args" '+I'
+
     args="$BATS_TEST_TMPDIR/final.lines"
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
     assert_args_contain "$args" 'cargo'
@@ -165,7 +169,7 @@ assert_args_contain_pair() {
 }
 
 @test 'skn-cargo leaves offline mode unset for enabled network and passes cargo +toolchain args through' {
-    export FAKE_SKN_SHOW_RESULT=enabled
+    export FAKE_SKN_INFO_RESULT=enabled
 
     run "$SKN_CARGO" +N +nightly build
     assert_success
@@ -190,25 +194,25 @@ assert_args_contain_pair() {
     assert_args_contain_pair "$args" '+R' "$HOME/.rustup"
 }
 
-@test 'Rust wrappers surface skn +S failures and malformed headers' {
-    export FAKE_SKN_SHOW_RESULT=fail
-    export FAKE_SKN_SHOW_STATUS=37
+@test 'Rust wrappers surface skn +I failures and malformed headers' {
+    export FAKE_SKN_INFO_RESULT=fail
+    export FAKE_SKN_INFO_STATUS=37
 
     run "$SKN_CARGO" build
     assert_status 37
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 
-    export FAKE_SKN_SHOW_RESULT=malformed
+    export FAKE_SKN_INFO_RESULT=malformed
     run "$SKN_RUST_ANALYZER" --stdio
     assert_status 2
-    assert_output_contains 'internal error parsing skn +S output'
+    assert_output_contains 'internal error parsing skn +I output'
 }
 
 @test 'Rust wrappers handle unset home-related variables' {
     run env -u HOME -u CARGO_HOME -u RUSTUP_HOME PATH="$PATH" \
-        FAKE_SKN_SHOW_ARGS="$FAKE_SKN_SHOW_ARGS" \
+        FAKE_SKN_INFO_ARGS="$FAKE_SKN_INFO_ARGS" \
         FAKE_SKN_FINAL_ARGS="$FAKE_SKN_FINAL_ARGS" \
-        FAKE_SKN_SHOW_RESULT=disabled \
+        FAKE_SKN_INFO_RESULT=disabled \
         FAKE_CARGO_LOCATE=fail \
         "$SKN_CARGO" build
     assert_success
@@ -216,9 +220,9 @@ assert_args_contain_pair() {
     rm -f "$FAKE_SKN_FINAL_ARGS"
 
     run env -u HOME -u CARGO_HOME -u RUSTUP_HOME PATH="$PATH" \
-        FAKE_SKN_SHOW_ARGS="$FAKE_SKN_SHOW_ARGS" \
+        FAKE_SKN_INFO_ARGS="$FAKE_SKN_INFO_ARGS" \
         FAKE_SKN_FINAL_ARGS="$FAKE_SKN_FINAL_ARGS" \
-        FAKE_SKN_SHOW_RESULT=disabled \
+        FAKE_SKN_INFO_RESULT=disabled \
         FAKE_CARGO_LOCATE=fail \
         "$SKN_RUST_ANALYZER" --stdio
     assert_success

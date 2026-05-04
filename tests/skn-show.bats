@@ -7,10 +7,11 @@ load 'helpers/common'
     run env -u SKN_PATH_CHECK "$SKN" true +S +R ./missing-ro +W ./missing-w +T ./missing-t
 
     assert_success
-    assert_output_contains 'skn: command: true'
+    assert_output_contains 'skn: sandboxed command: true'
     assert_output_contains 'skn: network disabled'
     assert_output_contains 'skn: environment mostly cleared'
-    assert_output_contains 'skn: bwrap command:'
+    assert_output_contains 'skn: equivalent invocation:'
+    assert_output_contains 'skn: resulting bwrap invocation:'
     assert_output_contains '--ro-bind'
     assert_output_contains '--bind'
     assert_output_contains '--tmp-overlay'
@@ -20,10 +21,34 @@ load 'helpers/common'
     run env -u SKN_PATH_CHECK "$SKN" echo +S +N +P +A -n -- hello
 
     assert_success
-    assert_output_contains 'skn: command: echo -n hello'
+    assert_output_contains 'skn: sandboxed command: echo -n hello'
     assert_output_contains 'skn: network enabled'
     assert_output_contains 'skn: environment preserved'
+    assert_output_contains 'skn: equivalent invocation:'
     assert_output_contains '--share-net'
+}
+
+@test '+I prints only the info header and skips path checks and filesystem validation' {
+    run env -u SKN_PATH_CHECK "$SKN" true +I +R ./missing-ro +W ./missing-w +T ./missing-t
+
+    assert_success
+    assert_output_contains 'skn: sandboxed command: true'
+    assert_output_contains 'skn: network disabled'
+    assert_output_contains 'skn: environment mostly cleared'
+    assert_output_contains 'skn: equivalent invocation:'
+    assert_output_not_contains 'skn: resulting bwrap invocation:'
+    assert_output_not_contains '--ro-bind'
+    assert_output_not_contains '--bind'
+    assert_output_not_contains '--tmp-overlay'
+}
+
+@test '+I takes precedence over +S' {
+    run env -u SKN_PATH_CHECK "$SKN" true +I +S +R ./missing-ro
+
+    assert_success
+    assert_output_contains 'skn: sandboxed command: true'
+    assert_output_contains 'skn: equivalent invocation:'
+    assert_output_not_contains 'skn: resulting bwrap invocation:'
 }
 
 @test '+S still rejects malformed skn options' {

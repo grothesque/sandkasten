@@ -15,8 +15,8 @@ network access unless enabled with +N.
 The only host data bound by default is /usr and a few selected parts of /etc,
 all read-only. Other host data is not visible unless explicitly bound into the
 sandbox with +R/+W/+T or configured read-only through SKN_RO_BINDS. When not
-using +S, paths provided through +R/+W/+T are validated by the mandatory
-SKN_PATH_CHECK command.
+using +S or +I, paths provided through +R/+W/+T are validated by the
+mandatory SKN_PATH_CHECK command.
 
 The skn command line interface is unusual: the command to be sandboxed comes
 first, followed by skn's own + options and then the command's arguments. This
@@ -39,12 +39,13 @@ skn-options:
   +N              enable network access
   +P              preserve caller environment instead of clearing it
   +S              show the sandbox plan after parsing, then exit
+  +I              show only the parsed skn info header, then exit
   --              stop parsing skn options
 
 Environment:
-  SKN_PATH_CHECK  mandatory unless +S is used; command used to validate paths
-                  from +R/+W/+T; executed directly with the path as its only
-                  argument. Set to 'true' to disable.
+  SKN_PATH_CHECK  mandatory unless +S or +I is used; command used to validate
+                  paths from +R/+W/+T; executed directly with the path as its
+                  only argument. Set to 'true' to disable.
   SKN_RO_BINDS    colon-separated paths to bind read-only
 EOF
 }
@@ -86,6 +87,26 @@ print_bwrap_command() {
 
     print_shell_words '    ' "$continuation" --
     print_shell_words '    ' '' "$@"
+}
+
+print_info_header() {
+    # Suite-internal +I contract: wrappers may parse this block of "skn: "
+    # lines, which includes exactly one network line. The block ends at EOF.
+    printf 'skn: sandboxed command: %s\n' "$(quote_shell_words "$cmd" "${command_args[@]}" "$@")"
+
+    if ((network)); then
+        echo "skn: network enabled"
+    else
+        echo "skn: network disabled"
+    fi
+
+    if ((preserve_env)); then
+        echo "skn: environment preserved"
+    else
+        echo "skn: environment mostly cleared"
+    fi
+
+    printf 'skn: equivalent invocation: %s\n' "$(quote_shell_words "$progname" "$cmd" "${skn_option_args[@]}" -- "${command_args[@]}" "$@")"
 }
 
 add_env() {
@@ -133,6 +154,25 @@ add_ro_bind_if_exists() {
     if [[ -e $path ]]; then
         add_bwrap --ro-bind "$path" "$path"
     fi
+}
+
+add_default_bwrap_setup() {
+    add_bwrap --unshare-all
+    add_bwrap --new-session
+    add_bwrap --die-with-parent
+
+    # Basic runtime filesystem
+    add_bwrap --ro-bind /usr /usr
+    add_bwrap --symlink usr/bin /bin
+    add_bwrap --symlink usr/lib /lib
+    add_bwrap --symlink usr/lib64 /lib64
+    add_bwrap --proc /proc
+    add_bwrap --dev /dev
+    add_bwrap --tmpfs /tmp
+    add_ro_bind_if_exists /etc/alternatives
+    add_ro_bind_if_exists /etc/ssl/certs
+    add_ro_bind_if_exists /etc/resolv.conf
+    add_ro_bind_if_exists /etc/manpath.config
 }
 
 queue_bind() {
@@ -232,7 +272,7 @@ if [[ -z $cmd ]]; then
 fi
 
 case $cmd in
-    +N|+P|+S|+R|+W|+T|+E|+A|+R?*|+W?*|+T?*|+E?*|+A?*)
+    +N|+P|+S|+I|+R|+W|+T|+E|+A|+R?*|+W?*|+T?*|+E?*|+A?*)
         echo "$progname: COMMAND comes before skn options; got '$cmd' as COMMAND" >&2
         exit 2
         ;;
@@ -241,28 +281,13 @@ esac
 network=0
 preserve_env=0
 show_mode=0
+info_mode=0
 command_args=()
+skn_option_args=()
 env_set_pairs=()
 bind_queue=()
 bwrap_args=()
 bwrap_display_lines=()
-
-add_bwrap --unshare-all
-add_bwrap --new-session
-add_bwrap --die-with-parent
-
-# Basic runtime filesystem
-add_bwrap --ro-bind /usr /usr
-add_bwrap --symlink usr/bin /bin
-add_bwrap --symlink usr/lib /lib
-add_bwrap --symlink usr/lib64 /lib64
-add_bwrap --proc /proc
-add_bwrap --dev /dev
-add_bwrap --tmpfs /tmp
-add_ro_bind_if_exists /etc/alternatives
-add_ro_bind_if_exists /etc/ssl/certs
-add_ro_bind_if_exists /etc/resolv.conf
-add_ro_bind_if_exists /etc/manpath.config
 
 queue_env_ro_binds SKN_RO_BINDS
 
@@ -275,17 +300,23 @@ while (($#)); do
             ;;
         +N)
             network=1
-            add_bwrap --share-net
+            skn_option_args+=(+N)
             shift
             continue
             ;;
         +P)
             preserve_env=1
+            skn_option_args+=(+P)
             shift
             continue
             ;;
         +S)
             show_mode=1
+            shift
+            continue
+            ;;
+        +I)
+            info_mode=1
             shift
             continue
             ;;
@@ -309,11 +340,14 @@ while (($#)); do
                 exit 2
             fi
             add_env "$2"
+            skn_option_args+=(+E "$2")
             shift 2
             continue
             ;;
         +E?*)
-            add_env "${1:2}"
+            assignment=${1:2}
+            add_env "$assignment"
+            skn_option_args+=(+E "$assignment")
             shift
             continue
             ;;
@@ -337,12 +371,24 @@ while (($#)); do
     esac
 
     queue_bind "$option" "$path" 1
+    skn_option_args+=("$option" "$path")
 done
+
+if ((info_mode)); then
+    print_info_header "$@"
+    exit 0
+fi
 
 if ((! show_mode)) && [[ -z ${SKN_PATH_CHECK:-} ]]; then
     echo "$progname: SKN_PATH_CHECK is not set" >&2
     usage >&2
     exit 2
+fi
+
+add_default_bwrap_setup
+
+if ((network)); then
+    add_bwrap --share-net
 fi
 
 emit_queued_binds
@@ -364,24 +410,8 @@ else
 fi
 
 if ((show_mode)); then
-    # Suite-internal contract: wrappers may parse this initial block of
-    # "skn: " lines, which includes exactly one network line. The block ends
-    # at the first line not starting with "skn: ".
-    printf 'skn: command: %s\n' "$(quote_shell_words "$cmd" "${command_args[@]}" "$@")"
-
-    if ((network)); then
-        echo "skn: network enabled"
-    else
-        echo "skn: network disabled"
-    fi
-
-    if ((preserve_env)); then
-        echo "skn: environment preserved"
-    else
-        echo "skn: environment mostly cleared"
-    fi
-
-    echo "skn: bwrap command:"
+    print_info_header "$@"
+    echo "skn: resulting bwrap invocation:"
     print_bwrap_command "$cmd" "${command_args[@]}" "$@"
     exit 0
 fi

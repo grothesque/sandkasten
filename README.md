@@ -118,6 +118,7 @@ so `skn` can consume `+W ../data` before passing the remaining arguments to `foo
 +N              enable network access
 +P              preserve caller environment instead of clearing it
 +S              show the sandbox plan after parsing, then exit
++I              show only the parsed skn info header, then exit
 --              stop parsing skn options
 ```
 
@@ -128,12 +129,22 @@ By default, the environment is mostly cleared.
 Use `+E` to pass specific values or `+P` to preserve the caller environment.
 
 Use `+S` to show the setup without running the command.
-It parses the command line, prints the final command, network and environment mode,
-and a multi-line shell-quoted `bwrap` command, then exits.
-It does not run `SKN_PATH_CHECK` or require checked paths to exist;
-use a harmless command such as `skn true ...` when you want validation without running the intended command.
-The printed command may include values passed with `+E`;
+It parses the command line, prints the sandboxed command, network and environment mode,
+a shell-quoted `skn` invocation, and a multi-line shell-quoted `bwrap` invocation, then exits.
+It does not run `SKN_PATH_CHECK` or require checked paths to exist.
+The printed invocation may include values passed with `+E`;
 with `+P`, it still depends on the caller environment.
+
+The `skn: equivalent invocation:` line is useful when a wrapper or alias generated the final sandbox invocation.
+It is a safe, normalized equivalent of the parsed invocation and may include `--` even if the original command did not.
+To inspect the sandbox manually, copy the invocation after that label,
+replace the sandboxed command with `bash`, and remove or adjust command arguments after `--`.
+To validate checked binds and `bwrap` setup without running the intended tool,
+copy the invocation after that label and replace the sandboxed command with `true`;
+unlike `+S`, this performs normal path validation and sandbox setup.
+
+Use `+I` when a script only needs the parsed `skn:` info header and not the full `bwrap` command.
+Like `+S`, it exits without running the command or path checks.
 
 Bind options take effect in the order they are given.
 For example, `+T . +W ./out` makes the current directory transient-writable,
@@ -156,7 +167,7 @@ and may be unavailable with setuid bubblewrap.
 
 ## Path checks
 
-Except in `+S` show mode, `skn` requires `SKN_PATH_CHECK` to be set.
+Except in `+S` show mode or `+I` info mode, `skn` requires `SKN_PATH_CHECK` to be set.
 It names a command used to validate paths before they are exposed through `+R`, `+W`, or `+T`.
 
 The command is executed directly, without shell evaluation,
@@ -191,6 +202,8 @@ export SKN_RO_BINDS="$HOME/.rustup:$HOME/.cargo/bin"
 `SKN_RO_BINDS` paths are bound read-only.
 Paths from this variable are not checked by `SKN_PATH_CHECK`;
 they are treated as trusted configuration chosen by the user.
+This is intended for stable user configuration, not for per-command access grants;
+use `+R` for per-command read-only binds.
 
 ## Installing
 

@@ -14,7 +14,7 @@ fetch dependencies with network access, then build, test, and analyze offline.
 - Cargo
 - rust-analyzer, for `skn-rust-analyzer`
 
-Except in `+S` show mode, these wrappers inherit `skn`’s requirement that `SKN_PATH_CHECK` be set;
+Except in `+S` show mode or `+I` info mode, these wrappers inherit `skn`’s requirement that `SKN_PATH_CHECK` be set;
 see [`skn` path checks](../README.md#path-checks).
 
 ## Fetch with network, build offline

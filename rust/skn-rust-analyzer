@@ -55,9 +55,9 @@ append_default_home_bind() {
     append_bind_if_exists "$option" "$path"
 }
 
-# Parses skn’s initial +S header block. This delegates option parsing to skn
+# Parses skn’s +I info header block. This delegates option parsing to skn
 # itself instead of mirroring skn’s option grammar here.
-network_enabled_from_skn_show() {
+network_enabled_from_skn_info() {
     local line state=
 
     while IFS= read -r line; do
@@ -91,18 +91,18 @@ fi
 append_default_home_bind +W CARGO_HOME .cargo
 append_default_home_bind +R RUSTUP_HOME .rustup
 
-skn_show_status=0
-skn_show_output=$("${skn_args[@]}" +S "$@") || skn_show_status=$?
-if ((skn_show_status != 0)); then
-    exit "$skn_show_status"
+skn_info_status=0
+skn_info_output=$("${skn_args[@]}" +I "$@") || skn_info_status=$?
+if ((skn_info_status != 0)); then
+    exit "$skn_info_status"
 fi
 
-if network_enabled_from_skn_show <<<"$skn_show_output"; then
+if network_enabled_from_skn_info <<<"$skn_info_output"; then
     :
 else
     case $? in
         1) skn_args+=(+E CARGO_NET_OFFLINE=true) ;;
-        *) echo "$progname: internal error parsing skn +S output" >&2; exit 2 ;;
+        *) echo "$progname: internal error parsing skn +I output" >&2; exit 2 ;;
     esac
 fi
 
