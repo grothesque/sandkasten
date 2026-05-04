@@ -91,11 +91,12 @@ skn-rust-analyzer
 ```
 
 As with `skn-cargo`, network is disabled by default and `CARGO_NET_OFFLINE=true` is set.
-Use `+N` to enable network access;
-the wrapper then does not set `CARGO_NET_OFFLINE`, though an already-inherited value still applies:
+Unlike `skn` itself, `skn-rust-analyzer` refuses `+N`, because rust-analyzer can execute project code through Cargo subprocesses.
+Fetch dependencies separately, then run rust-analyzer offline:
 
 ```sh
-skn-rust-analyzer +N
+skn-cargo +N fetch
+skn-rust-analyzer
 ```
 
 Use `+S` to show the generated sandbox command without starting rust-analyzer:

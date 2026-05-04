@@ -9,17 +9,16 @@
 #
 #   skn-rust-analyzer +W ../dep
 #   skn-rust-analyzer +T ~/.cargo
-#   skn-rust-analyzer +N
 #
 # rust-analyzer itself is sandboxed.  Cargo, rustc, build scripts, proc macros,
 # and tests launched by rust-analyzer inherit that sandbox, regardless of how
 # rust-analyzer chooses to locate cargo.
 #
-# Without +N, the wrapper asks skn to set CARGO_NET_OFFLINE=true inside the
-# sandbox.  This preserves the important separation between fetching
-# dependencies with network access and analyzing/building without it.  If +N is
-# given, network access is enabled and this wrapper does not set
-# CARGO_NET_OFFLINE.
+# The wrapper asks skn to set CARGO_NET_OFFLINE=true inside the sandbox. This
+# preserves the important separation between fetching dependencies with network
+# access and analyzing/building without it. +N is refused because rust-analyzer
+# can execute build scripts, proc macros, tests, and other project code through
+# Cargo subprocesses.
 #
 # The detected Cargo workspace is bound writable because rust-analyzer and cargo
 # may need to write target files and other workspace-local state. If no Cargo
@@ -98,7 +97,9 @@ if ((skn_info_status != 0)); then
 fi
 
 if network_enabled_from_skn_info <<<"$skn_info_output"; then
-    :
+    echo "$progname: refusing +N: rust-analyzer can execute project code via Cargo subprocesses" >&2
+    echo "$progname: fetch dependencies separately, for example with skn-cargo +N fetch, then run rust-analyzer offline" >&2
+    exit 2
 else
     case $? in
         1) skn_args+=(+E CARGO_NET_OFFLINE=true) ;;

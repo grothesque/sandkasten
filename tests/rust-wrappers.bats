@@ -208,6 +208,16 @@ assert_args_contain_pair() {
     assert_output_contains 'internal error parsing skn +I output'
 }
 
+@test 'skn-rust-analyzer refuses network access' {
+    export FAKE_SKN_INFO_RESULT=enabled
+
+    run "$SKN_RUST_ANALYZER" +N --stdio
+    assert_status 2
+    assert_output_contains 'refusing +N'
+    assert_output_contains 'skn-cargo +N fetch'
+    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+}
+
 @test 'Rust wrappers handle unset home-related variables' {
     run env -u HOME -u CARGO_HOME -u RUSTUP_HOME PATH="$PATH" \
         FAKE_SKN_INFO_ARGS="$FAKE_SKN_INFO_ARGS" \
