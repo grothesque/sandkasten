@@ -254,8 +254,8 @@ queue_env_ro_binds() {
 }
 
 if (($# == 0)); then
-    usage >&2
-    exit 2
+    usage
+    exit 0
 fi
 
 case $1 in
