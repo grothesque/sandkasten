@@ -40,9 +40,11 @@ skn-cargo build
 Without `+N`, `skn-cargo` sets `CARGO_NET_OFFLINE=true` inside the sandbox.
 Cargo arguments are otherwise passed through unchanged, except that leading arguments in `skn`’s current or reserved uppercase `+` option namespace must be passed after `--`.
 
-With `+N`, `skn-cargo` only allows `fetch`, `update`, and `search`.
+With `+N`, `skn-cargo` only allows `fetch`, `update`, `add`,
+`upgrade`, `generate-lockfile`, and `search`.
 Other subcommands, including `build`, `check`, `test`, `run`,
-`doc`, custom subcommands, and the no-subcommand default, are refused because they may execute build scripts,
+`doc`, `install`, custom subcommands other than `upgrade`,
+and the no-subcommand default, are refused because they may execute build scripts,
 proc macros, tests, or other project code with network access.
 
 For compatibility with toolchains and project-specific Cargo configuration,
@@ -60,6 +62,7 @@ With `+N`, network access is enabled and the wrapper does not set `CARGO_NET_OFF
 
 ```sh
 skn-cargo +N update
+skn-cargo +N add serde
 skn-cargo +N search serde
 ```
 
@@ -67,6 +70,12 @@ Because the wrappers preserve the caller environment, an already-inherited `CARG
 If you intentionally need a different networked Cargo operation,
 bypass this policy explicitly by invoking `skn` with the real Cargo path,
 for example `skn "$SKN_REAL_CARGO" +N ...` in strict PATH setups.
+
+`cargo install` is intentionally not allowed with `+N`, because it downloads and builds code in one step.
+When source is available, use a two-stage local-source workflow instead:
+fetch or update dependencies with network access, then install from the local path offline,
+for example `skn-cargo +N fetch --locked` followed by `skn-cargo install --path . --locked`.
+For crates already present in Cargo’s cache, `skn-cargo install --offline --locked CRATE` may also work.
 
 Use `+S` to show the generated sandbox command without running Cargo:
 

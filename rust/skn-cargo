@@ -17,7 +17,7 @@
 #   skn-cargo build
 #
 # With +N, only Cargo subcommands that are expected not to execute project code
-# are allowed: fetch, update, and search.
+# are allowed: fetch, update, add, upgrade, generate-lockfile, and search.
 #
 # Cargo arguments are otherwise passed through unchanged, so syntax such as
 # +toolchain remains Cargo’s concern.  The only overlap is with leading values
@@ -171,7 +171,7 @@ cargo_network_subcommand_allowed() {
     local subcommand=$1
 
     case $subcommand in
-        fetch|update|search) return 0 ;;
+        fetch|update|add|upgrade|generate-lockfile|search) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -217,7 +217,7 @@ if network_enabled_from_skn_info <<<"$skn_info_output"; then
         else
             echo "$progname: refusing +N without an allowed Cargo subcommand" >&2
         fi
-        echo "$progname: network-enabled skn-cargo is limited to: fetch, update, search" >&2
+        echo "$progname: network-enabled skn-cargo is limited to: fetch, update, add, upgrade, generate-lockfile, search" >&2
         echo "$progname: fetch dependencies with +N, then build, test, or run offline" >&2
         exit 2
     fi

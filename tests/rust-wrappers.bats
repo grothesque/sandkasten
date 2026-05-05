@@ -232,12 +232,12 @@ assert_args_contain_pair() {
     assert_args_contain "$args" 'build'
 }
 
-@test 'skn-cargo allows network for fetch, update, and search' {
+@test 'skn-cargo allows network for selected dependency-management subcommands' {
     local subcommand
 
     export FAKE_SKN_INFO_RESULT=enabled
 
-    for subcommand in fetch update search; do
+    for subcommand in fetch update add upgrade generate-lockfile search; do
         rm -f "$FAKE_SKN_FINAL_ARGS"
 
         run "$SKN_CARGO" +N "$subcommand"
@@ -280,14 +280,14 @@ assert_args_contain_pair() {
 
     export FAKE_SKN_INFO_RESULT=enabled
 
-    for subcommand in build run check test clippy ''; do
+    for subcommand in build run check test clippy install ''; do
         rm -f "$FAKE_SKN_FINAL_ARGS"
 
         if [[ -n $subcommand ]]; then
             run "$SKN_CARGO" +N "$subcommand"
             assert_status 2
             assert_output_contains "refusing +N"
-            assert_output_contains 'fetch, update, search'
+            assert_output_contains 'fetch, update, add, upgrade, generate-lockfile, search'
             assert_output_contains "$subcommand"
         else
             run "$SKN_CARGO" +N
