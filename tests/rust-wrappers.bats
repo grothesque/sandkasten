@@ -275,6 +275,60 @@ assert_args_contain_pair() {
     assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
 }
 
+@test 'skn-cargo allows network after Cargo top-level options' {
+    export FAKE_SKN_INFO_RESULT=enabled
+
+    run "$SKN_CARGO" +N --locked fetch
+    assert_success
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$BATS_TEST_TMPDIR/final-locked.lines"
+    assert_args_not_contain "$BATS_TEST_TMPDIR/final-locked.lines" 'CARGO_NET_OFFLINE=true'
+
+    run "$SKN_CARGO" +N -q --color always fetch
+    assert_success
+
+    run "$SKN_CARGO" +N +nightly --config net.git-fetch-with-cli=true update
+    assert_success
+
+    run "$SKN_CARGO" +N --color=always --config=foo=bar search serde
+    assert_success
+
+    run "$SKN_CARGO" +N -Z unstable-options fetch
+    assert_success
+}
+
+@test 'skn-cargo refuses network for build-like subcommands after Cargo top-level options' {
+    export FAKE_SKN_INFO_RESULT=enabled
+
+    run "$SKN_CARGO" +N --locked -q build
+    assert_status 2
+    assert_output_contains "refusing +N with cargo subcommand 'build'"
+    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+
+    run "$SKN_CARGO" +N +nightly --color always test
+    assert_status 2
+    assert_output_contains "refusing +N with cargo subcommand 'test'"
+    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+}
+
+@test 'skn-cargo refuses network for Cargo script mode and unknown top-level options' {
+    export FAKE_SKN_INFO_RESULT=enabled
+
+    run "$SKN_CARGO" +N -Zscript fetch
+    assert_status 2
+    assert_output_contains 'cannot safely identify Cargo subcommand'
+    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+
+    run "$SKN_CARGO" +N -Z script fetch
+    assert_status 2
+    assert_output_contains 'cannot safely identify Cargo subcommand'
+    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+
+    run "$SKN_CARGO" +N --future-option fetch
+    assert_status 2
+    assert_output_contains 'cannot safely identify Cargo subcommand'
+    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+}
+
 @test 'skn-cargo refuses network for build-like or absent subcommands' {
     local subcommand
 
@@ -297,6 +351,11 @@ assert_args_contain_pair() {
 
         [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
     done
+
+    run "$SKN_CARGO" +N --version
+    assert_status 2
+    assert_output_contains 'refusing +N without an allowed Cargo subcommand'
+    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 }
 
 @test 'skn-cargo adds home binds as explicit skn options when present' {

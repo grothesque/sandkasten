@@ -124,9 +124,29 @@ cargo_subcommand_for_policy() {
         shift
     fi
 
-    if (($#)); then
-        printf '%s\n' "$1"
-    fi
+    while (($#)); do
+        case $1 in
+            --) return 0 ;;
+            -Zscript*) return 1 ;;
+            -Z)
+                (($# >= 2)) || return 1
+                [[ $2 == script* ]] && return 1
+                shift 2
+                ;;
+            -V|--version|--list|--locked|--offline|--frozen|-h|--help|-q|--quiet|--verbose|-v|-vv|-vvv|-vvvv|-vvvvv)
+                shift
+                ;;
+            --color=*|--config=*|--explain=*|-Z?*)
+                shift
+                ;;
+            --color|--config|--explain|-C)
+                (($# >= 2)) || return 1
+                shift 2
+                ;;
+            -*) return 1 ;;
+            *) printf '%s\n' "$1"; return 0 ;;
+        esac
+    done
 
     return 0
 }
@@ -171,7 +191,12 @@ if ! parse_skn_info <<<"$skn_info_output"; then
 fi
 
 if [[ $skn_network_state == enabled ]]; then
-    subcommand=$(cargo_subcommand_for_policy "${cargo_argv[@]}")
+    if ! subcommand=$(cargo_subcommand_for_policy "${cargo_argv[@]}"); then
+        echo "$progname: refusing +N: cannot safely identify Cargo subcommand" >&2
+        echo "$progname: network-enabled skn-cargo is limited to: fetch, update, add, upgrade, generate-lockfile, search" >&2
+        exit 2
+    fi
+
     if ! cargo_network_subcommand_allowed "$subcommand"; then
         if [[ -n $subcommand ]]; then
             echo "$progname: refusing +N with cargo subcommand '$subcommand'" >&2
