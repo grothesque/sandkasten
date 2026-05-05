@@ -75,9 +75,15 @@ print_shell_words() {
     printf '%s%s%s\n' "$indent" "$(quote_shell_words "$@")" "$suffix"
 }
 
-add_bwrap() {
+add_bwrap_args() {
     bwrap_args+=("$@")
     bwrap_display_lines+=("$(quote_shell_words "$@")")
+}
+
+add_ro_bind_try() {
+    local path=$1
+
+    add_bwrap_args --ro-bind-try "$path" "$path"
 }
 
 print_bwrap_command() {
@@ -94,27 +100,7 @@ print_bwrap_command() {
     print_shell_words '    ' '' "$@"
 }
 
-print_info_header() {
-    # Suite-internal +I contract: wrappers may parse this block of "skn: "
-    # lines, which includes exactly one network line. The block ends at EOF.
-    printf 'skn: sandboxed command: %s\n' "$(quote_shell_words "$cmd" "${command_args[@]}" "$@")"
-
-    if ((network)); then
-        echo "skn: network enabled"
-    else
-        echo "skn: network disabled"
-    fi
-
-    if ((preserve_env)); then
-        echo "skn: environment preserved"
-    else
-        echo "skn: environment mostly cleared"
-    fi
-
-    printf 'skn: equivalent invocation: %s\n' "$(quote_shell_words "$progname" "$cmd" "${skn_option_args[@]}" -- "${command_args[@]}" "$@")"
-}
-
-add_env() {
+queue_env() {
     local assignment=$1
     local name value
 
@@ -132,14 +118,14 @@ add_env() {
         exit 2
     fi
 
-    env_set_pairs+=("$name" "$value")
+    env_queue+=("$name" "$value")
 }
 
-add_env_overrides() {
+add_queued_envs() {
     local i
 
-    for ((i = 0; i < ${#env_set_pairs[@]}; i += 2)); do
-        add_bwrap --setenv "${env_set_pairs[i]}" "${env_set_pairs[i + 1]}"
+    for ((i = 0; i < ${#env_queue[@]}; i += 2)); do
+        add_bwrap_args --setenv "${env_queue[i]}" "${env_queue[i + 1]}"
     done
 }
 
@@ -153,22 +139,91 @@ check_path() {
     }
 }
 
-add_ro_bind_try() {
-    local path=$1
+queue_bind() {
+    local option=$1
+    local path=$2
+    local needs_check=${3:-0}
 
-    add_bwrap --ro-bind-try "$path" "$path"
+    if [[ -z $path ]]; then
+        echo "$progname: Empty path for $option" >&2
+        exit 2
+    fi
+
+    bind_queue+=("$option" "$path" "$needs_check")
+}
+
+add_bind() {
+    local option=$1
+    local path=$2
+    local needs_check=$3
+    local abs_path realpath_args
+
+    if ((show_mode)); then
+        realpath_args=(-s -m)
+    else
+        if [[ $needs_check == 1 ]]; then
+            check_path "$option option" "$path"
+        fi
+        realpath_args=(-s -e)
+    fi
+
+    abs_path=$(realpath "${realpath_args[@]}" -- "$path") || {
+        echo "$progname: Invalid path for $option: $path" >&2
+        exit 2
+    }
+
+    case $option in
+        +R) add_bwrap_args --ro-bind "$abs_path" "$abs_path" ;;
+        +W) add_bwrap_args --bind "$abs_path" "$abs_path" ;;
+        +T)
+            if ((! show_mode)) && [[ ! -d $abs_path ]]; then
+                echo "$progname: +T requires an existing directory: $path" >&2
+                exit 2
+            fi
+            add_bwrap_args --overlay-src "$abs_path" --tmp-overlay "$abs_path"
+            ;;
+        *)
+            echo "$progname: Internal error: invalid bind option: $option" >&2
+            exit 2
+            ;;
+    esac
+}
+
+add_queued_binds() {
+    local i
+
+    for ((i = 0; i < ${#bind_queue[@]}; i += 3)); do
+        add_bind "${bind_queue[i]}" "${bind_queue[i + 1]}" "${bind_queue[i + 2]}"
+    done
+}
+
+queue_env_ro_binds() {
+    local var_name=$1
+    local value path
+
+    [[ -v $var_name ]] || return 0
+    value=${!var_name}
+    [[ -n $value ]] || return 0
+
+    while [[ $value == *:* ]]; do
+        path=${value%%:*}
+        queue_bind +R "$path" 0
+        value=${value#*:}
+    done
+
+    queue_bind +R "$value" 0
 }
 
 add_base_bwrap_setup() {
-    add_bwrap --unshare-all
-    add_bwrap --new-session
-    add_bwrap --die-with-parent
+    add_bwrap_args --unshare-all
+    add_bwrap_args --new-session
+    add_bwrap_args --die-with-parent
 
     # Basic runtime filesystem
-    add_bwrap --proc /proc
-    add_bwrap --dev /dev
-    add_bwrap --tmpfs /tmp
-    add_bwrap --ro-bind /usr /usr
+    add_bwrap_args --proc /proc
+    add_bwrap_args --dev /dev
+    add_bwrap_args --tmpfs /tmp
+    add_bwrap_args --ro-bind /usr /usr
     add_ro_bind_try /bin
     add_ro_bind_try /sbin
     add_ro_bind_try /lib
@@ -197,79 +252,24 @@ add_network_bwrap_setup() {
     add_ro_bind_try /etc/ssl/cert.pem
 }
 
-queue_bind() {
-    local option=$1
-    local path=$2
-    local needs_check=${3:-0}
+print_info_header() {
+    # Suite-internal +I contract: wrappers may parse this block of "skn: "
+    # lines, which includes exactly one network line. The block ends at EOF.
+    printf 'skn: sandboxed command: %s\n' "$(quote_shell_words "$cmd" "${command_args[@]}" "$@")"
 
-    if [[ -z $path ]]; then
-        echo "$progname: Empty path for $option" >&2
-        exit 2
-    fi
-
-    bind_queue+=("$option" "$path" "$needs_check")
-}
-
-emit_bind() {
-    local option=$1
-    local path=$2
-    local needs_check=$3
-    local abs_path realpath_args
-
-    if ((show_mode)); then
-        realpath_args=(-s -m)
+    if ((network)); then
+        echo "skn: network enabled"
     else
-        if [[ $needs_check == 1 ]]; then
-            check_path "$option option" "$path"
-        fi
-        realpath_args=(-s -e)
+        echo "skn: network disabled"
     fi
 
-    abs_path=$(realpath "${realpath_args[@]}" -- "$path") || {
-        echo "$progname: Invalid path for $option: $path" >&2
-        exit 2
-    }
+    if ((preserve_env)); then
+        echo "skn: environment preserved"
+    else
+        echo "skn: environment mostly cleared"
+    fi
 
-    case $option in
-        +R) add_bwrap --ro-bind "$abs_path" "$abs_path" ;;
-        +W) add_bwrap --bind "$abs_path" "$abs_path" ;;
-        +T)
-            if ((! show_mode)) && [[ ! -d $abs_path ]]; then
-                echo "$progname: +T requires an existing directory: $path" >&2
-                exit 2
-            fi
-            add_bwrap --overlay-src "$abs_path" --tmp-overlay "$abs_path"
-            ;;
-        *)
-            echo "$progname: Internal error: invalid bind option: $option" >&2
-            exit 2
-            ;;
-    esac
-}
-
-emit_queued_binds() {
-    local i
-
-    for ((i = 0; i < ${#bind_queue[@]}; i += 3)); do
-        emit_bind "${bind_queue[i]}" "${bind_queue[i + 1]}" "${bind_queue[i + 2]}"
-    done
-}
-
-queue_env_ro_binds() {
-    local var_name=$1
-    local value path
-
-    [[ -v $var_name ]] || return 0
-    value=${!var_name}
-    [[ -n $value ]] || return 0
-
-    while [[ $value == *:* ]]; do
-        path=${value%%:*}
-        queue_bind +R "$path" 0
-        value=${value#*:}
-    done
-
-    queue_bind +R "$value" 0
+    printf 'skn: equivalent invocation: %s\n' "$(quote_shell_words "$progname" "$cmd" "${skn_option_args[@]}" -- "${command_args[@]}" "$@")"
 }
 
 if (($# == 0)); then
@@ -306,7 +306,7 @@ show_mode=0
 info_mode=0
 command_args=()
 skn_option_args=()
-env_set_pairs=()
+env_queue=()
 bind_queue=()
 bwrap_args=()
 bwrap_display_lines=()
@@ -366,14 +366,14 @@ while (($#)); do
                 echo "$progname: Missing argument for +E" >&2
                 exit 2
             fi
-            add_env "$2"
+            queue_env "$2"
             skn_option_args+=(+E "$2")
             shift 2
             continue
             ;;
         +E?*)
             assignment=${1:2}
-            add_env "$assignment"
+            queue_env "$assignment"
             skn_option_args+=(+E "$assignment")
             shift
             continue
@@ -421,25 +421,25 @@ add_base_bwrap_setup
 
 if ((network)); then
     add_network_bwrap_setup
-    add_bwrap --share-net
+    add_bwrap_args --share-net
 fi
 
-emit_queued_binds
+add_queued_binds
 
-add_bwrap --remount-ro /
+add_bwrap_args --remount-ro /
 
 if ((preserve_env)); then
-    add_env_overrides
+    add_queued_envs
 else
-    add_bwrap --clearenv
-    add_bwrap --setenv SHELL /bin/bash
+    add_bwrap_args --clearenv
+    add_bwrap_args --setenv SHELL /bin/bash
 
     # Preserve selected environment variables.
     for key in PATH HOME USER LOGNAME TERM COLORTERM LANG "${!LC_@}"; do
-        [[ -v $key ]] && add_bwrap --setenv "$key" "${!key}"
+        [[ -v $key ]] && add_bwrap_args --setenv "$key" "${!key}"
     done
 
-    add_env_overrides
+    add_queued_envs
 fi
 
 if ((show_mode)); then

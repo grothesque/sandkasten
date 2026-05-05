@@ -35,7 +35,7 @@ set -euo pipefail
 
 progname="${0##*/}"
 
-append_bind_if_exists() {
+add_bind_if_exists() {
     local option=$1
     local path=$2
 
@@ -44,7 +44,7 @@ append_bind_if_exists() {
     skn_args+=("$option" "$path")
 }
 
-append_default_home_bind() {
+add_default_home_bind() {
     local option=$1
     local override_var_name=$2
     local default_basename=$3
@@ -56,7 +56,7 @@ append_default_home_bind() {
         path=$HOME/$default_basename
     fi
 
-    append_bind_if_exists "$option" "$path"
+    add_bind_if_exists "$option" "$path"
 }
 
 resolve_executable_path() {
@@ -114,40 +114,29 @@ resolve_real_cargo() {
 
 # Parses skn’s +I info header block. This delegates option parsing to skn
 # itself instead of mirroring skn’s option grammar here.
-network_enabled_from_skn_info() {
-    local line state=
-
-    while IFS= read -r line; do
-        [[ $line == skn:\ * ]] || break
-        case $line in
-            "skn: network "*) state=${line#"skn: network "}; break ;;
-        esac
-    done
-
-    case $state in
-        enabled) return 0 ;;
-        disabled) return 1 ;;
-        *) return 2 ;;
-    esac
-}
-
-command_argv_from_skn_info() {
+parse_skn_info() {
     local line command_words=
+    local -a skn_command_argv=()
+
+    skn_network_state=
+    cargo_argv=()
 
     while IFS= read -r line; do
         [[ $line == skn:\ * ]] || break
         case $line in
-            "skn: sandboxed command: "*)
-                command_words=${line#"skn: sandboxed command: "}
-                break
-                ;;
+            "skn: sandboxed command: "*) command_words=${line#"skn: sandboxed command: "} ;;
+            "skn: network "*) skn_network_state=${line#"skn: network "} ;;
         esac
     done
 
     [[ -n $command_words ]] || return 1
+    case $skn_network_state in
+        enabled|disabled) ;;
+        *) return 1 ;;
+    esac
 
-    local -a skn_command_argv=()
-    eval "skn_command_argv=($command_words)"
+    eval "skn_command_argv=($command_words)" || return 1
+    ((${#skn_command_argv[@]} > 0)) || return 1
     cargo_argv=("${skn_command_argv[@]:1}")
 }
 
@@ -194,8 +183,8 @@ if workspace_manifest=$("$real_cargo" locate-project --workspace --message-forma
 fi
 
 # If they exist, make cargo home writable and rustup home readable.
-append_default_home_bind +W CARGO_HOME .cargo
-append_default_home_bind +R RUSTUP_HOME .rustup
+add_default_home_bind +W CARGO_HOME .cargo
+add_default_home_bind +R RUSTUP_HOME .rustup
 
 skn_info_status=0
 skn_info_output=$("${skn_args[@]}" +I "$@") || skn_info_status=$?
@@ -203,13 +192,12 @@ if ((skn_info_status != 0)); then
     exit "$skn_info_status"
 fi
 
-if network_enabled_from_skn_info <<<"$skn_info_output"; then
-    cargo_argv=()
-    if ! command_argv_from_skn_info <<<"$skn_info_output"; then
-        echo "$progname: internal error parsing skn +I command argv output" >&2
-        exit 2
-    fi
+if ! parse_skn_info <<<"$skn_info_output"; then
+    echo "$progname: internal error parsing skn +I output" >&2
+    exit 2
+fi
 
+if [[ $skn_network_state == enabled ]]; then
     subcommand=$(cargo_subcommand_for_policy "${cargo_argv[@]}")
     if ! cargo_network_subcommand_allowed "$subcommand"; then
         if [[ -n $subcommand ]]; then
@@ -222,10 +210,7 @@ if network_enabled_from_skn_info <<<"$skn_info_output"; then
         exit 2
     fi
 else
-    case $? in
-        1) skn_args+=(+E CARGO_NET_OFFLINE=true) ;;
-        *) echo "$progname: internal error parsing skn +I output" >&2; exit 2 ;;
-    esac
+    skn_args+=(+E CARGO_NET_OFFLINE=true)
 fi
 
 exec "${skn_args[@]}" "$@"

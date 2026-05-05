@@ -30,7 +30,7 @@ set -euo pipefail
 
 progname="${0##*/}"
 
-append_bind_if_exists() {
+add_bind_if_exists() {
     local option=$1
     local path=$2
 
@@ -39,7 +39,7 @@ append_bind_if_exists() {
     skn_args+=("$option" "$path")
 }
 
-append_default_home_bind() {
+add_default_home_bind() {
     local option=$1
     local override_var_name=$2
     local default_basename=$3
@@ -51,7 +51,7 @@ append_default_home_bind() {
         path=$HOME/$default_basename
     fi
 
-    append_bind_if_exists "$option" "$path"
+    add_bind_if_exists "$option" "$path"
 }
 
 resolve_executable_path() {
@@ -70,6 +70,24 @@ resolve_executable_path() {
     }
 
     printf '%s\n' "$resolved"
+}
+
+path_is_skn_cargo_wrapper() {
+    local path=$1
+    local self self_dir found_skn_cargo
+
+    self=$(realpath -e -- "${BASH_SOURCE[0]}") || return 1
+    self_dir=$(dirname -- "$self")
+
+    if [[ -e $self_dir/skn-cargo && $path -ef $self_dir/skn-cargo ]]; then
+        return 0
+    fi
+
+    if found_skn_cargo=$(type -P skn-cargo 2>/dev/null) && [[ $path -ef $found_skn_cargo ]]; then
+        return 0
+    fi
+
+    return 1
 }
 
 resolve_real_rust_analyzer() {
@@ -105,24 +123,6 @@ resolve_real_rust_analyzer() {
     fi
 
     resolve_executable_path rust-analyzer "$found"
-}
-
-path_is_skn_cargo_wrapper() {
-    local path=$1
-    local self self_dir found_skn_cargo
-
-    self=$(realpath -e -- "${BASH_SOURCE[0]}") || return 1
-    self_dir=$(dirname -- "$self")
-
-    if [[ -e $self_dir/skn-cargo && $path -ef $self_dir/skn-cargo ]]; then
-        return 0
-    fi
-
-    if found_skn_cargo=$(type -P skn-cargo 2>/dev/null) && [[ $path -ef $found_skn_cargo ]]; then
-        return 0
-    fi
-
-    return 1
 }
 
 resolve_real_cargo() {
@@ -209,8 +209,8 @@ else
 fi
 
 # If they exist, make cargo home writable and rustup home readable.
-append_default_home_bind +W CARGO_HOME .cargo
-append_default_home_bind +R RUSTUP_HOME .rustup
+add_default_home_bind +W CARGO_HOME .cargo
+add_default_home_bind +R RUSTUP_HOME .rustup
 
 skn_info_status=0
 skn_info_output=$("${skn_args[@]}" +I "$@") || skn_info_status=$?
