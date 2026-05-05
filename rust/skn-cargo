@@ -16,6 +16,9 @@
 #   skn-cargo +N fetch
 #   skn-cargo build
 #
+# With +N, only Cargo subcommands that are expected not to execute project code
+# are allowed: fetch, update, and search.
+#
 # Cargo arguments are otherwise passed through unchanged, so syntax such as
 # +toolchain remains Cargo’s concern.  The only overlap is with leading values
 # that match skn’s current or reserved + option syntax: for example,
@@ -56,6 +59,59 @@ append_default_home_bind() {
     append_bind_if_exists "$option" "$path"
 }
 
+resolve_executable_path() {
+    local label=$1
+    local path=$2
+    local resolved
+
+    if [[ ! -x $path ]]; then
+        echo "$progname: $label is not executable: $path" >&2
+        exit 2
+    fi
+
+    resolved=$(realpath -s -e -- "$path") || {
+        echo "$progname: cannot resolve $label: $path" >&2
+        exit 2
+    }
+
+    printf '%s\n' "$resolved"
+}
+
+resolve_real_cargo() {
+    local self found resolved
+
+    self=$(realpath -e -- "${BASH_SOURCE[0]}") || {
+        echo "$progname: cannot resolve wrapper path" >&2
+        exit 2
+    }
+
+    if [[ -n ${SKN_REAL_CARGO:-} ]]; then
+        if [[ $SKN_REAL_CARGO != /* ]]; then
+            echo "$progname: SKN_REAL_CARGO must be an absolute path" >&2
+            exit 2
+        fi
+        resolved=$(resolve_executable_path SKN_REAL_CARGO "$SKN_REAL_CARGO")
+        if [[ $resolved -ef $self ]]; then
+            echo "$progname: SKN_REAL_CARGO points to this wrapper" >&2
+            exit 2
+        fi
+        printf '%s\n' "$resolved"
+        return 0
+    fi
+
+    if ! found=$(type -P cargo 2>/dev/null); then
+        echo "$progname: cargo not found in PATH; set SKN_REAL_CARGO" >&2
+        exit 2
+    fi
+
+    if [[ $found -ef $self ]]; then
+        echo "$progname: cargo resolves to this wrapper; set SKN_REAL_CARGO to the real cargo" >&2
+        exit 2
+    fi
+
+    resolve_executable_path cargo "$found"
+}
+
 # Parses skn’s +I info header block. This delegates option parsing to skn
 # itself instead of mirroring skn’s option grammar here.
 network_enabled_from_skn_info() {
@@ -75,13 +131,64 @@ network_enabled_from_skn_info() {
     esac
 }
 
+command_argv_from_skn_info() {
+    local line command_words=
+
+    while IFS= read -r line; do
+        [[ $line == skn:\ * ]] || break
+        case $line in
+            "skn: sandboxed command: "*)
+                command_words=${line#"skn: sandboxed command: "}
+                break
+                ;;
+        esac
+    done
+
+    [[ -n $command_words ]] || return 1
+
+    local -a skn_command_argv=()
+    eval "skn_command_argv=($command_words)"
+    cargo_argv=("${skn_command_argv[@]:1}")
+}
+
+cargo_subcommand_for_policy() {
+    local -a args=("$@")
+    local i=0
+
+    # Cargo accepts an optional leading rustup-style +toolchain argument.
+    if ((i < ${#args[@]})) && [[ ${args[i]} == +* ]]; then
+        ((++i))
+    fi
+
+    if ((i < ${#args[@]})); then
+        printf '%s\n' "${args[i]}"
+    fi
+
+    return 0
+}
+
+cargo_network_subcommand_allowed() {
+    local subcommand=$1
+
+    case $subcommand in
+        fetch|update|search) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+real_cargo=$(resolve_real_cargo)
+real_cargo_dir=$(dirname -- "$real_cargo")
+sandbox_path=$real_cargo_dir${PATH:+:$PATH}
+
 skn_args=(
     skn
-    cargo
+    "$real_cargo"
     +P
+    +E "CARGO=$real_cargo"
+    +E "PATH=$sandbox_path"
 )
 
-if workspace_manifest=$(cargo locate-project --workspace --message-format=plain 2>/dev/null); then
+if workspace_manifest=$("$real_cargo" locate-project --workspace --message-format=plain 2>/dev/null); then
     workspace_dir=$(dirname -- "$workspace_manifest")
     skn_args+=(+W "$workspace_dir")
 fi
@@ -97,7 +204,23 @@ if ((skn_info_status != 0)); then
 fi
 
 if network_enabled_from_skn_info <<<"$skn_info_output"; then
-    :
+    cargo_argv=()
+    if ! command_argv_from_skn_info <<<"$skn_info_output"; then
+        echo "$progname: internal error parsing skn +I command argv output" >&2
+        exit 2
+    fi
+
+    subcommand=$(cargo_subcommand_for_policy "${cargo_argv[@]}")
+    if ! cargo_network_subcommand_allowed "$subcommand"; then
+        if [[ -n $subcommand ]]; then
+            echo "$progname: refusing +N with cargo subcommand '$subcommand'" >&2
+        else
+            echo "$progname: refusing +N without an allowed Cargo subcommand" >&2
+        fi
+        echo "$progname: network-enabled skn-cargo is limited to: fetch, update, search" >&2
+        echo "$progname: fetch dependencies with +N, then build, test, or run offline" >&2
+        exit 2
+    fi
 else
     case $? in
         1) skn_args+=(+E CARGO_NET_OFFLINE=true) ;;

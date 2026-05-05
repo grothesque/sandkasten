@@ -40,6 +40,11 @@ skn-cargo build
 Without `+N`, `skn-cargo` sets `CARGO_NET_OFFLINE=true` inside the sandbox.
 Cargo arguments are otherwise passed through unchanged, except that leading arguments in `skn`’s current or reserved uppercase `+` option namespace must be passed after `--`.
 
+With `+N`, `skn-cargo` only allows `fetch`, `update`, and `search`.
+Other subcommands, including `build`, `check`, `test`, `run`,
+`doc`, custom subcommands, and the no-subcommand default, are refused because they may execute build scripts,
+proc macros, tests, or other project code with network access.
+
 For compatibility with toolchains and project-specific Cargo configuration,
 the Rust wrappers pass `+P` to `skn` and therefore preserve the caller environment by default.
 Be aware that untrusted build scripts, proc macros, tests,
@@ -55,10 +60,13 @@ With `+N`, network access is enabled and the wrapper does not set `CARGO_NET_OFF
 
 ```sh
 skn-cargo +N update
-skn-cargo +N install ripgrep
+skn-cargo +N search serde
 ```
 
 Because the wrappers preserve the caller environment, an already-inherited `CARGO_NET_OFFLINE` value still applies even with `+N`.
+If you intentionally need a different networked Cargo operation,
+bypass this policy explicitly by invoking `skn` with the real Cargo path,
+for example `skn "$SKN_REAL_CARGO" +N ...` in strict PATH setups.
 
 Use `+S` to show the generated sandbox command without running Cargo:
 
@@ -127,6 +135,32 @@ alias cargo-fetch='skn-cargo +N fetch'
 alias cargo-update='skn-cargo +N update'
 ```
 
-Avoid installing wrappers in a way that shadows the real `cargo` or `rust-analyzer` unless you are prepared to handle transparency issues.
-IDEs and tools may ignore shell aliases, use `$CARGO`, prefer `$CARGO_HOME/bin/cargo`,
-or otherwise resolve tools differently from an interactive shell.
+### Strict PATH mode
+
+For untrusted-work environments, you may choose to shadow Cargo and rust-analyzer from an earlier `PATH` directory so editors and IDEs that ignore shell aliases still find the wrappers:
+
+```text
+~/bin/skn-strict/cargo          -> skn-cargo
+~/bin/skn-strict/rust-analyzer  -> skn-rust-analyzer
+```
+
+Do not overwrite rustup’s real proxies in `$CARGO_HOME/bin`;
+put symlinks or small launcher scripts in an earlier directory instead.
+In this mode, set explicit real-tool paths so the wrappers can fail closed instead of recursing into themselves:
+
+```sh
+export SKN_REAL_CARGO="$HOME/.cargo/bin/cargo"
+export SKN_REAL_RUST_ANALYZER="$HOME/.cargo/bin/rust-analyzer"
+PATH="$HOME/bin/skn-strict:$PATH" editor
+```
+
+If `cargo` in `PATH` resolves to `skn-cargo`, `skn-cargo` refuses to run unless `SKN_REAL_CARGO` points to an executable that is not the wrapper.
+Similarly, if `rust-analyzer` in `PATH` resolves to `skn-rust-analyzer`,
+`skn-rust-analyzer` requires `SKN_REAL_RUST_ANALYZER`;
+it also requires `SKN_REAL_CARGO` when `cargo` resolves to `skn-cargo`.
+Inside the sandbox, the wrappers set `CARGO` and prefix `PATH` so rust-analyzer and Cargo subprocesses find the real Cargo inside the existing sandbox rather than starting a nested wrapper.
+
+Strict PATH mode is useful for avoiding accidental vanilla Cargo use,
+but it is not perfectly transparent.
+Some tools use absolute paths, `$CARGO`, rustup directly, or editor-specific tool configuration.
+The named-wrapper setup remains the least surprising default.
