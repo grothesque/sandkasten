@@ -33,31 +33,9 @@
 
 set -euo pipefail
 
-progname="${0##*/}"
-
-add_bind_if_exists() {
-    local option=$1
-    local path=$2
-
-    [[ -n $path && -e $path ]] || return 0
-
-    skn_args+=("$option" "$path")
-}
-
-add_default_home_bind() {
-    local option=$1
-    local override_var_name=$2
-    local default_basename=$3
-    local path=
-
-    if [[ -n ${!override_var_name:-} ]]; then
-        path=${!override_var_name}
-    elif [[ -n ${HOME:-} ]]; then
-        path=$HOME/$default_basename
-    fi
-
-    add_bind_if_exists "$option" "$path"
-}
+# Hardcode name because this script might be used as ‘cargo’, and error messages
+# would become too confusing.
+progname=skn-cargo
 
 resolve_executable_path() {
     local label=$1
@@ -141,16 +119,13 @@ parse_skn_info() {
 }
 
 cargo_subcommand_for_policy() {
-    local -a args=("$@")
-    local i=0
-
     # Cargo accepts an optional leading rustup-style +toolchain argument.
-    if ((i < ${#args[@]})) && [[ ${args[i]} == +* ]]; then
-        ((++i))
+    if (($#)) && [[ $1 == +* ]]; then
+        shift
     fi
 
-    if ((i < ${#args[@]})); then
-        printf '%s\n' "${args[i]}"
+    if (($#)); then
+        printf '%s\n' "$1"
     fi
 
     return 0
@@ -178,19 +153,17 @@ skn_args=(
 )
 
 if workspace_manifest=$("$real_cargo" locate-project --workspace --message-format=plain 2>/dev/null); then
-    workspace_dir=$(dirname -- "$workspace_manifest")
-    skn_args+=(+W "$workspace_dir")
+    skn_args+=(+W "$(dirname -- "$workspace_manifest")")
 fi
 
 # If they exist, make cargo home writable and rustup home readable.
-add_default_home_bind +W CARGO_HOME .cargo
-add_default_home_bind +R RUSTUP_HOME .rustup
+cargo_home=${CARGO_HOME:-${HOME:+$HOME/.cargo}}
+[[ -n $cargo_home && -e $cargo_home ]] && skn_args+=(+W "$cargo_home")
 
-skn_info_status=0
-skn_info_output=$("${skn_args[@]}" +I "$@") || skn_info_status=$?
-if ((skn_info_status != 0)); then
-    exit "$skn_info_status"
-fi
+rustup_home=${RUSTUP_HOME:-${HOME:+$HOME/.rustup}}
+[[ -n $rustup_home && -e $rustup_home ]] && skn_args+=(+R "$rustup_home")
+
+skn_info_output=$("${skn_args[@]}" +I "$@") || exit $?
 
 if ! parse_skn_info <<<"$skn_info_output"; then
     echo "$progname: internal error parsing skn +I output" >&2
