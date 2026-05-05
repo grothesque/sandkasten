@@ -89,11 +89,11 @@ load 'helpers/common'
 @test '+S still rejects malformed skn options' {
     run env -u SKN_PATH_CHECK "$SKN" true +S +E 1BAD=value
     assert_failure
-    assert_output_contains 'Invalid environment variable name'
+    assert_output_contains 'invalid environment variable name'
 
     run env -u SKN_PATH_CHECK "$SKN" true +S +W
     assert_failure
-    assert_output_contains 'Missing argument for +W'
+    assert_output_contains 'missing argument for +W'
 }
 
 @test 'option-looking command is diagnosed as misplaced skn option' {
@@ -107,7 +107,7 @@ load 'helpers/common'
     run env -u SKN_PATH_CHECK "$SKN" true +I +Qfuture
 
     assert_failure
-    assert_output_contains 'Unknown or reserved skn option: +Qfuture'
+    assert_output_contains 'reserved skn option: +Qfuture'
     assert_output_contains 'use -- before command arguments that start with +<uppercase>'
 }
 

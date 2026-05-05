@@ -28,7 +28,7 @@ separate namespace from ordinary command options. For example
 alias foo='skn foo'
 
 Now, the foo alias will behave almost like the unwrapped foo command, only that
-it will run wrapped, and accept a few additional + options (if given at the
+it will run sandboxed, and accept a few additional + options (if given at the
 beginning). If the unwrapped foo needs an argument that looks like a skn option,
 it can be given after another command argument, or -- can be used.
 
@@ -53,6 +53,11 @@ Environment:
                   only argument. Set to 'true' to disable.
   SKN_RO_BINDS    colon-separated paths to bind read-only
 EOF
+}
+
+offer_help_and_exit() {
+    echo "Try '$progname --help' for more information." >&2
+    exit 2
 }
 
 quote_shell_words() {
@@ -105,17 +110,16 @@ queue_env() {
     local name value
 
     if [[ $assignment != *=* ]]; then
-        echo "$progname: Invalid argument for +E: expected VAR=VALUE" >&2
-        usage >&2
-        exit 2
+        echo "$progname: invalid argument for +E: expected VAR=VALUE" >&2
+        offer_help_and_exit
     fi
 
     name=${assignment%%=*}
     value=${assignment#*=}
 
     if [[ ! $name =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
-        echo "$progname: Invalid environment variable name for +E: $name" >&2
-        exit 2
+        echo "$progname: invalid environment variable name for +E: $name" >&2
+        offer_help_and_exit
     fi
 
     env_queue+=("$name" "$value")
@@ -135,7 +139,7 @@ check_path() {
 
     "$SKN_PATH_CHECK" "$path" || {
         echo "$progname: SKN_PATH_CHECK rejected $path ($label) for sharing with sandbox" >&2
-        exit 2
+        offer_help_and_exit
     }
 }
 
@@ -145,8 +149,8 @@ queue_bind() {
     local needs_check=${3:-0}
 
     if [[ -z $path ]]; then
-        echo "$progname: Empty path for $option" >&2
-        exit 2
+        echo "$progname: empty path for $option" >&2
+        offer_help_and_exit
     fi
 
     bind_queue+=("$option" "$path" "$needs_check")
@@ -168,8 +172,8 @@ add_bind() {
     fi
 
     abs_path=$(realpath "${realpath_args[@]}" -- "$path") || {
-        echo "$progname: Invalid path for $option: $path" >&2
-        exit 2
+        echo "$progname: invalid path for $option: $path" >&2
+        offer_help_and_exit
     }
 
     case $option in
@@ -178,12 +182,12 @@ add_bind() {
         +T)
             if ((! show_mode)) && [[ ! -d $abs_path ]]; then
                 echo "$progname: +T requires an existing directory: $path" >&2
-                exit 2
+                offer_help_and_exit
             fi
             add_bwrap_args --overlay-src "$abs_path" --tmp-overlay "$abs_path"
             ;;
         *)
-            echo "$progname: Internal error: invalid bind option: $option" >&2
+            echo "$progname: internal error: invalid bind option: $option" >&2
             exit 2
             ;;
     esac
@@ -288,15 +292,14 @@ cmd=$1
 shift
 
 if [[ -z $cmd ]]; then
-    echo "$progname: Empty COMMAND" >&2
-    usage >&2
-    exit 2
+    echo "$progname: empty COMMAND" >&2
+    offer_help_and_exit
 fi
 
 case $cmd in
     +[A-Z]*)
         echo "$progname: COMMAND comes before skn options; got '$cmd' as COMMAND" >&2
-        exit 2
+        offer_help_and_exit
         ;;
 esac
 
@@ -350,8 +353,8 @@ while (($#)); do
         +R|+W|+T)
             option=$1
             if (($# < 2)); then
-                echo "$progname: Missing argument for $option" >&2
-                exit 2
+                echo "$progname: missing argument for $option" >&2
+                offer_help_and_exit
             fi
             path=$2
             shift 2
@@ -363,8 +366,8 @@ while (($#)); do
             ;;
         +E)
             if (($# < 2)); then
-                echo "$progname: Missing argument for +E" >&2
-                exit 2
+                echo "$progname: missing argument for +E" >&2
+                offer_help_and_exit
             fi
             queue_env "$2"
             skn_option_args+=(+E "$2")
@@ -380,8 +383,8 @@ while (($#)); do
             ;;
         +A)
             if (($# < 2)); then
-                echo "$progname: Missing argument for +A" >&2
-                exit 2
+                echo "$progname: missing argument for +A" >&2
+                offer_help_and_exit
             fi
             command_args+=("$2")
             shift 2
@@ -393,9 +396,9 @@ while (($#)); do
             continue
             ;;
         +[A-Z]*)
-            echo "$progname: Unknown or reserved skn option: $1" >&2
+            echo "$progname: reserved skn option: $1" >&2
             echo "$progname: use -- before command arguments that start with +<uppercase>" >&2
-            exit 2
+            offer_help_and_exit
             ;;
         *)
             break
@@ -413,8 +416,7 @@ fi
 
 if ((! show_mode)) && [[ -z ${SKN_PATH_CHECK:-} ]]; then
     echo "$progname: SKN_PATH_CHECK is not set" >&2
-    usage >&2
-    exit 2
+    offer_help_and_exit
 fi
 
 add_base_bwrap_setup
