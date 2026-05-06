@@ -17,14 +17,6 @@ assert_success() {
     fi
 }
 
-assert_failure() {
-    if [[ $status -eq 0 ]]; then
-        printf 'expected failure, got success\n' >&2
-        printf 'output:\n%s\n' "$output" >&2
-        return 1
-    fi
-}
-
 assert_status() {
     local expected=$1
 

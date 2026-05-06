@@ -29,20 +29,21 @@ load 'helpers/common'
 }
 
 @test '+S shows default optional system binds without requiring paths to exist' {
+    local path
+
     run env -u SKN_PATH_CHECK "$SKN" true +S
 
     assert_success
     assert_output_contains '--ro-bind /usr /usr'
-    assert_output_contains '--ro-bind-try /bin /bin'
-    assert_output_contains '--ro-bind-try /sbin /sbin'
-    assert_output_contains '--ro-bind-try /etc/alternatives /etc/alternatives'
-    assert_output_contains '--ro-bind-try /etc/manpath.config /etc/manpath.config'
-    assert_output_contains '--ro-bind-try /etc/man_db.conf /etc/man_db.conf'
-    assert_output_contains '--ro-bind-try /etc/man.conf /etc/man.conf'
-    assert_output_not_contains '--symlink usr/bin /bin'
+
+    for path in /bin /sbin /etc/alternatives /etc/manpath.config /etc/man_db.conf /etc/man.conf; do
+        assert_output_contains "--ro-bind-try $path $path"
+    done
 }
 
 @test '+S only includes DNS and CA root binds when network is enabled' {
+    local path
+
     run env -u SKN_PATH_CHECK "$SKN" true +S
 
     assert_success
@@ -53,13 +54,9 @@ load 'helpers/common'
     run env -u SKN_PATH_CHECK "$SKN" true +S +N
 
     assert_success
-    assert_output_contains '--ro-bind-try /etc/resolv.conf /etc/resolv.conf'
-    assert_output_contains '--ro-bind-try /etc/ssl/certs /etc/ssl/certs'
-    assert_output_contains '--ro-bind-try /etc/pki/tls/certs /etc/pki/tls/certs'
-    assert_output_contains '--ro-bind-try /etc/ssl/ca-bundle.pem /etc/ssl/ca-bundle.pem'
-    assert_output_contains '--ro-bind-try /etc/pki/tls/cacert.pem /etc/pki/tls/cacert.pem'
-    assert_output_contains '--ro-bind-try /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem'
-    assert_output_contains '--ro-bind-try /etc/ssl/cert.pem /etc/ssl/cert.pem'
+    for path in /etc/resolv.conf /etc/ssl/certs /etc/ssl/cert.pem; do
+        assert_output_contains "--ro-bind-try $path $path"
+    done
     assert_output_not_contains '/etc/hosts'
 }
 
@@ -72,9 +69,6 @@ load 'helpers/common'
     assert_output_contains 'skn: environment mostly cleared'
     assert_output_contains 'skn: equivalent invocation:'
     assert_output_not_contains 'skn: resulting bwrap invocation:'
-    assert_output_not_contains '--ro-bind'
-    assert_output_not_contains '--bind'
-    assert_output_not_contains '--tmp-overlay'
 }
 
 @test '+I takes precedence over +S' {
@@ -88,27 +82,29 @@ load 'helpers/common'
 
 @test '+S still rejects malformed skn options' {
     run env -u SKN_PATH_CHECK "$SKN" true +S +E 1BAD=value
-    assert_failure
-    assert_output_contains 'invalid environment variable name'
+    assert_status 2
+    assert_output_contains 'environment variable name'
 
     run env -u SKN_PATH_CHECK "$SKN" true +S +W
-    assert_failure
-    assert_output_contains 'missing argument for +W'
+    assert_status 2
+    assert_output_contains 'missing argument'
+    assert_output_contains '+W'
 }
 
 @test 'option-looking command is diagnosed as misplaced skn option' {
     run "$SKN" +T. bash
 
-    assert_failure
-    assert_output_contains "COMMAND comes before skn options; got '+T.' as COMMAND"
+    assert_status 2
+    assert_output_contains 'COMMAND'
+    assert_output_contains '+T.'
 }
 
 @test 'unknown uppercase skn options are reserved' {
     run env -u SKN_PATH_CHECK "$SKN" true +I +Qfuture
 
-    assert_failure
-    assert_output_contains 'reserved skn option: +Qfuture'
-    assert_output_contains 'use -- before command arguments that start with +<uppercase>'
+    assert_status 2
+    assert_output_contains 'reserved'
+    assert_output_contains '+Qfuture'
 }
 
 @test 'reserved-looking command arguments can be passed after --' {

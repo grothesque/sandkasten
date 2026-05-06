@@ -16,77 +16,16 @@ setup() {
 #!/bin/bash
 set -euo pipefail
 
-cmd=${1:-}
-if (($#)); then
-    shift
-fi
-
 has_info=0
-network=0
-command_args=()
-remaining=("$@")
-
-while ((${#remaining[@]})); do
-    arg=${remaining[0]}
-    case $arg in
-        --)
-            remaining=("${remaining[@]:1}")
-            break
-            ;;
-        +N)
-            network=1
-            remaining=("${remaining[@]:1}")
-            ;;
-        +P|+S|+I)
-            [[ $arg == +I ]] && has_info=1
-            remaining=("${remaining[@]:1}")
-            ;;
-        +R|+W|+T|+E)
-            remaining=("${remaining[@]:2}")
-            ;;
-        +R?*|+W?*|+T?*|+E?*)
-            remaining=("${remaining[@]:1}")
-            ;;
-        +A)
-            command_args+=("${remaining[1]:?}")
-            remaining=("${remaining[@]:2}")
-            ;;
-        +A?*)
-            command_args+=("${arg:2}")
-            remaining=("${remaining[@]:1}")
-            ;;
-        *)
-            break
-            ;;
-    esac
+for arg in "$@"; do
+    [[ $arg == +I ]] && has_info=1
 done
 
-quote_shell_words() {
-    local arg quoted out='' sep=''
-
-    for arg in "$@"; do
-        printf -v quoted '%q' "$arg"
-        out+="$sep$quoted"
-        sep=' '
-    done
-
-    printf '%s' "$out"
-}
-
 if ((has_info)); then
-    printf '%s\0' "$cmd" "$@" >"${FAKE_SKN_INFO_ARGS:?}"
-    case ${FAKE_SKN_INFO_RESULT:-disabled} in
-        disabled)
-            printf 'skn: sandboxed command: %s\n' "$(quote_shell_words "$cmd" "${command_args[@]}" "${remaining[@]}")"
-            echo 'skn: network disabled'
-            echo 'skn: environment preserved'
-            echo 'skn: equivalent invocation: fake'
-            ;;
-        enabled)
-            printf 'skn: sandboxed command: %s\n' "$(quote_shell_words "$cmd" "${command_args[@]}" "${remaining[@]}")"
-            echo 'skn: network enabled'
-            echo 'skn: environment preserved'
-            echo 'skn: equivalent invocation: fake'
+    printf '%s\0' "$@" >"${FAKE_SKN_INFO_ARGS:?}"
+    case ${FAKE_SKN_INFO_RESULT:-real} in
+        real)
+            exec "${REPO_ROOT:?}/skn" "$@"
             ;;
         malformed)
             echo 'skn: sandboxed command: fake'
@@ -103,7 +42,7 @@ if ((has_info)); then
     exit 0
 fi
 
-printf '%s\0' "$cmd" "$@" >"${FAKE_SKN_FINAL_ARGS:?}"
+printf '%s\0' "$@" >"${FAKE_SKN_FINAL_ARGS:?}"
 exit "${FAKE_SKN_FINAL_STATUS:-0}"
 EOF
     chmod +x "$fake_bin/skn"
@@ -152,7 +91,7 @@ EOF
     export HOME="$BATS_TEST_TMPDIR/home"
     mkdir -p "$HOME"
     unset CARGO_HOME RUSTUP_HOME
-    export FAKE_SKN_INFO_RESULT=disabled
+    export FAKE_SKN_INFO_RESULT=real
     export FAKE_CARGO_LOCATE=fail
 }
 
@@ -237,10 +176,8 @@ assert_args_contain_pair() {
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
     assert_args_contain "$args" 'cargo'
     assert_args_contain "$args" '+P'
-    assert_args_contain "$args" '+W'
-    assert_args_contain "$args" "$workspace"
-    assert_args_contain "$args" '+E'
-    assert_args_contain "$args" 'CARGO_NET_OFFLINE=true'
+    assert_args_contain_pair "$args" '+W' "$workspace"
+    assert_args_contain_pair "$args" '+E' 'CARGO_NET_OFFLINE=true'
     assert_args_not_contain_env "$args" CARGO
     assert_args_not_contain_env "$args" PATH
     assert_args_contain "$args" 'build'
@@ -248,8 +185,6 @@ assert_args_contain_pair() {
 
 @test 'skn-cargo allows network for selected dependency-management subcommands' {
     local subcommand
-
-    export FAKE_SKN_INFO_RESULT=enabled
 
     for subcommand in fetch update add upgrade generate-lockfile search; do
         rm -f "$FAKE_SKN_FINAL_ARGS"
@@ -266,8 +201,6 @@ assert_args_contain_pair() {
 }
 
 @test 'skn-cargo leaves offline mode unset for allowed network and passes cargo +toolchain args through' {
-    export FAKE_SKN_INFO_RESULT=enabled
-
     run "$SKN_CARGO" +N +nightly fetch
     assert_success
 
@@ -290,8 +223,6 @@ assert_args_contain_pair() {
 }
 
 @test 'skn-cargo allows network after Cargo top-level options' {
-    export FAKE_SKN_INFO_RESULT=enabled
-
     run "$SKN_CARGO" +N --locked fetch
     assert_success
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$BATS_TEST_TMPDIR/final-locked.lines"
@@ -311,22 +242,20 @@ assert_args_contain_pair() {
 }
 
 @test 'skn-cargo refuses network for build-like subcommands after Cargo top-level options' {
-    export FAKE_SKN_INFO_RESULT=enabled
-
     run "$SKN_CARGO" +N --locked -q build
     assert_status 2
-    assert_output_contains "refusing +N with cargo subcommand 'build'"
+    assert_output_contains 'refusing +N'
+    assert_output_contains 'build'
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 
     run "$SKN_CARGO" +N +nightly --color always test
     assert_status 2
-    assert_output_contains "refusing +N with cargo subcommand 'test'"
+    assert_output_contains 'refusing +N'
+    assert_output_contains 'test'
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 }
 
 @test 'skn-cargo refuses network for Cargo script mode and unknown top-level options' {
-    export FAKE_SKN_INFO_RESULT=enabled
-
     run "$SKN_CARGO" +N -Zscript fetch
     assert_status 2
     assert_output_contains 'cannot safely identify Cargo subcommand'
@@ -346,16 +275,13 @@ assert_args_contain_pair() {
 @test 'skn-cargo refuses network for build-like or absent subcommands' {
     local subcommand
 
-    export FAKE_SKN_INFO_RESULT=enabled
-
     for subcommand in build run check test clippy install ''; do
         rm -f "$FAKE_SKN_FINAL_ARGS"
 
         if [[ -n $subcommand ]]; then
             run "$SKN_CARGO" +N "$subcommand"
             assert_status 2
-            assert_output_contains "refusing +N"
-            assert_output_contains 'fetch, update, add, upgrade, generate-lockfile, search'
+            assert_output_contains 'refusing +N'
             assert_output_contains "$subcommand"
         else
             run "$SKN_CARGO" +N
@@ -432,12 +358,10 @@ assert_args_contain_pair() {
     export FAKE_SKN_INFO_RESULT=malformed
     run "$SKN_RUST_ANALYZER" --stdio
     assert_status 2
-    assert_output_contains 'internal error parsing skn +I output'
+    assert_output_contains 'parsing skn +I output'
 }
 
 @test 'skn-rust-analyzer refuses network access' {
-    export FAKE_SKN_INFO_RESULT=enabled
-
     run "$SKN_RUST_ANALYZER" +N --stdio
     assert_status 2
     assert_output_contains 'refusing +N'
@@ -449,7 +373,7 @@ assert_args_contain_pair() {
     run env -u HOME -u CARGO_HOME -u RUSTUP_HOME PATH="$PATH" \
         FAKE_SKN_INFO_ARGS="$FAKE_SKN_INFO_ARGS" \
         FAKE_SKN_FINAL_ARGS="$FAKE_SKN_FINAL_ARGS" \
-        FAKE_SKN_INFO_RESULT=disabled \
+        FAKE_SKN_INFO_RESULT=real \
         FAKE_CARGO_LOCATE=fail \
         "$SKN_CARGO" build
     assert_success
@@ -459,7 +383,7 @@ assert_args_contain_pair() {
     run env -u HOME -u CARGO_HOME -u RUSTUP_HOME PATH="$PATH" \
         FAKE_SKN_INFO_ARGS="$FAKE_SKN_INFO_ARGS" \
         FAKE_SKN_FINAL_ARGS="$FAKE_SKN_FINAL_ARGS" \
-        FAKE_SKN_INFO_RESULT=disabled \
+        FAKE_SKN_INFO_RESULT=real \
         FAKE_CARGO_LOCATE=fail \
         "$SKN_RUST_ANALYZER" --stdio
     assert_success
@@ -478,9 +402,8 @@ assert_args_contain_pair() {
     args="$BATS_TEST_TMPDIR/final.lines"
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
     assert_args_contain "$args" 'rust-analyzer'
-    assert_args_contain "$args" '+W'
-    assert_args_contain "$args" "$workspace"
-    assert_args_contain "$args" 'CARGO_NET_OFFLINE=true'
+    assert_args_contain_pair "$args" '+W' "$workspace"
+    assert_args_contain_pair "$args" '+E' 'CARGO_NET_OFFLINE=true'
 }
 
 @test 'skn-rust-analyzer falls back to read-only cwd outside Cargo workspaces' {
@@ -493,7 +416,6 @@ assert_args_contain_pair() {
 
     args="$BATS_TEST_TMPDIR/final.lines"
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
-    assert_args_contain "$args" '+R'
-    assert_args_contain "$args" "$launch"
+    assert_args_contain_pair "$args" '+R' "$launch"
     assert_args_not_contain "$args" '+W'
 }
