@@ -12,14 +12,6 @@ Run COMMAND inside a bwrap sandbox intended for untrusted code. The sandbox
 has a private /tmp, a mostly cleared environment unless +P is used, and no
 network access unless enabled with +N.
 
-The only host data bound by default is /usr, optional system runtime paths
-such as /bin and /lib, and a few selected parts of /etc, all read-only. DNS
-configuration and common public CA root locations are added only with +N.
-Other host data is not visible unless explicitly bound into the sandbox with
-+R/+W/+T or configured read-only through SKN_RO_BINDS. When not using +S or
-+I, paths provided through +R/+W/+T are validated by the mandatory
-SKN_PATH_CHECK command.
-
 The skn command line interface is unusual: the command to be sandboxed comes
 first, followed by skn's own + options and then the command's arguments. This
 keeps aliases and small wrappers transparent while putting skn's controls in a
@@ -27,10 +19,18 @@ separate namespace from ordinary command options. For example
 
 alias foo='skn foo'
 
-Now, the foo alias will behave almost like the unwrapped foo command, only that
-it will run sandboxed, and accept a few additional + options (if given at the
-beginning). If the unwrapped foo needs an argument that looks like a skn option,
+Now, the foo alias behaves almost like the unwrapped foo command, except that
+it runs sandboxed and accepts skn + options before the wrapped command's own
+arguments. If the unwrapped foo needs an argument that looks like a skn option,
 it can be given after another command argument, or -- can be used.
+
+The only host data bound by default is /usr, optional system runtime paths
+such as /bin and /lib, and a few selected parts of /etc, all read-only. DNS
+configuration and common public CA root locations are added only with +N.
+Other host data is not visible unless explicitly bound into the sandbox with
++R/+W/+T or configured read-only through SKN_RO_BINDS. When not using +S or
++I, paths provided through +R/+W/+T are validated by the mandatory
+SKN_PATH_CHECK command.
 
 skn-options:
   +R PATH         bind PATH read-only into the sandbox
