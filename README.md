@@ -34,12 +34,12 @@ allowing sandbox inspection before use.
 
 ## Overview
 
-The default sandbox has:
+By default, the sandbox has:
 
 - no network access
 - a private `/tmp`
 - a mostly cleared environment
-- read-only access to `/usr`, optional system runtime paths such as `/bin` and `/lib`, and selected `/etc` files
+- only minimal read-only access to host system/runtime files
 - no access to the rest of the host filesystem unless explicitly configured
 
 The suite also includes integrations for common tools:
@@ -60,30 +60,7 @@ Additional integrations have their own requirements:
 
 - [Rust wrappers](rust/README.md)
 
-## Threat model and non-goals
-
-`skn` is intended to reduce accidental exposure when running untrusted project code,
-build scripts, proc macros, tests, language servers, and similar tools.
-It is especially useful for preventing easy access to unrelated files in your home directory and for disabling network access by default.
-
-It is not a complete security solution.
-In particular:
-
-- it relies on the kernel and bubblewrap behaving correctly
-- it does not defend against kernel vulnerabilities or sandbox escapes
-- it does not make malicious code safe to run with secrets deliberately bound into the sandbox
-- `+P` preserves the caller environment, which may expose secrets through environment variables
-- persistent writable bind mounts allow sandboxed code to modify those paths
-
-Use it as a pragmatic containment layer, not as a guarantee that hostile code is harmless.
-
-## `skn` usage
-
-```sh
-skn COMMAND [skn-options] [--] [COMMAND-args...]
-```
-
-Examples:
+## Quick examples
 
 ```sh
 skn make
@@ -92,11 +69,18 @@ skn make +T .
 skn curl +N -- https://example.com/
 ```
 
+The launch current directory is not exposed automatically.
+Use `+R`, `+W`, or `+T` when the command needs access to the current directory or another project path.
+
+## How invocation works
+
+```sh
+skn COMMAND [skn-options] [--] [COMMAND-args...]
+```
+
 The command to execute comes before `skn` options.
 This unusual ordering is intentional:
-it makes shell aliases and small wrappers convenient while keeping sandbox controls close to the command they affect.
-`skn` options use a leading `+` to put them in a separate namespace from ordinary command options and to signal that they add something to the sandbox,
-such as network access, a bind, or an environment variable.
+it makes shell aliases and small wrappers convenient while keeping sandbox controls in their own `+` option namespace.
 
 For example:
 
@@ -105,9 +89,17 @@ alias foo='skn foo'
 ```
 
 Then `foo +W ../data run` expands to `skn foo +W ../data run`,
-so `skn` can consume `+W ../data` before passing the remaining arguments to `foo`.
+so `skn` can consume `+W ../data` before passing `run` to `foo`.
 
-### Options
+`skn` parses only the initial `+` option prefix after `COMMAND`.
+If the wrapped command needs an argument that looks like a `skn` option,
+pass it after another command argument or use `--`.
+Unrecognized `+` options with uppercase names are reserved for future `skn` options while this prefix is being parsed.
+
+## Options summary
+
+This is the user-facing interface at a glance.
+Run `skn --help` for the exact command reference.
 
 ```text
 +R PATH         bind PATH read-only into the sandbox
@@ -122,52 +114,47 @@ so `skn` can consume `+W ../data` before passing the remaining arguments to `foo
 --              stop parsing skn options
 ```
 
-By default, network access is disabled.
-Use `+N` to enable it.
-With `+N`, `skn` also adds read-only binds for DNS configuration and common public CA root locations so ordinary HTTPS clients can work without exposing broader host state such as `/etc/hosts`.
-
-By default, the environment is mostly cleared.
-Use `+E` to pass specific values or `+P` to preserve the caller environment.
-
-While `skn` is parsing its option prefix, unrecognized arguments that start with `+` followed by an uppercase ASCII letter are rejected as reserved for future `skn` options.
-Use `--` before command arguments that look like reserved `skn` options.
-
-Use `+S` to show the setup without running the command.
-It parses the command line, prints the sandboxed command, network and environment mode,
-a shell-quoted `skn` invocation, and a multi-line shell-quoted `bwrap` invocation, then exits.
-It does not run `SKN_PATH_CHECK` or require checked paths to exist.
-The printed invocation may include values passed with `+E`;
-with `+P`, it still depends on the caller environment.
-
-The `skn: equivalent invocation:` line is useful when a wrapper or alias generated the final sandbox invocation.
-It is a safe, normalized equivalent of the parsed invocation and may include `--` even if the original command did not.
-To inspect the sandbox manually, copy the invocation after that label,
-replace the sandboxed command with `bash`, and remove or adjust command arguments after `--`.
-To validate checked binds and `bwrap` setup without running the intended tool,
-copy the invocation after that label and replace the sandboxed command with `true`;
-unlike `+S`, this performs normal path validation and sandbox setup.
-
-Use `+I` when a script only needs the parsed `skn:` info header and not the full `bwrap` command.
-Like `+S`, it exits without running the command or path checks.
-
 Bind options take effect in the order they are given.
 For example, `+T . +W ./out` makes the current directory transient-writable,
 then makes `./out` persistently writable on top of it;
 reversing the options makes `./out` part of the transient overlay.
 
-## Transient writable overlays
+`+S` is useful for inspecting the sandbox plan without running the command.
+It prints the sandboxed command, network and environment mode,
+an equivalent `skn` invocation, and the resulting `bwrap` invocation.
+To inspect the sandbox manually, copy the equivalent invocation,
+replace the sandboxed command with `bash`, and adjust or remove command arguments after `--`.
+`+I` is intended for wrappers that only need the parsed `skn:` metadata header.
+Neither mode runs path checks or validates bind paths.
 
-`+T PATH` exposes an existing directory as a transient writable overlay.
-Initial reads come from the host directory, but writes, deletes,
-and replacements are stored in temporary sandbox storage and discarded when the sandbox exits.
-This is useful for tools that insist on writing to a cache or source tree even when you do not want host data modified.
+## Sandbox model
 
-`+T` is not a snapshot:
-concurrent host-side changes to the underlying directory are not hidden or made coherent,
-and reads can still expose secrets from that directory.
-Writes consume temporary sandbox storage.
-It also depends on `bubblewrap` and kernel overlayfs support,
-and may be unavailable with setuid bubblewrap.
+`skn` tries to expose enough of the host system read-only for ordinary system commands to run,
+while avoiding access to unrelated user data.
+
+In broad strokes:
+
+- system/runtime files are bound read-only
+- a small amount of system configuration is bound read-only when useful
+- DNS and common TLS certificate configuration are added only with `+N`
+- user/project files are not visible unless explicitly bound with `+R`, `+W`, `+T`,
+  or trusted configuration such as `SKN_RO_BINDS`
+- the synthetic sandbox filesystem is remounted read-only after setup
+- persistent writes are limited to explicit `+W` binds
+- non-persistent writes are limited to the private `/tmp` and explicit `+T` overlays
+
+The exact built-in bind list is intentionally an implementation detail;
+inspect `./skn` or use `+S` when you need to see the current plan.
+
+By default, the environment is mostly cleared.
+Use `+E` to pass specific values or `+P` to preserve the caller environment.
+Be careful with `+P`:
+environment variables often contain secrets or host-specific paths.
+
+Network access is disabled by default.
+Use `+N` to enable it.
+Host-specific name overrides such as `/etc/hosts` are not exposed automatically;
+bind trusted configuration explicitly if a command needs it.
 
 ## Path checks
 
@@ -192,24 +179,24 @@ A path-check command is deliberately policy-specific.
 A typical policy might allow project directories under `~/src` and temporary directories under `/tmp`,
 but reject `$HOME` itself.
 The checker is responsible for applying the full path policy,
-including any desired canonicalization or symlink dereferencing;
-`skn` deliberately does not hardcode those policy decisions.
+including any desired canonicalization or symlink dereferencing.
 
-## Built-in system binds
+## Transient writable overlays
 
-`skn` always binds `/usr` read-only.
-It also tries to bind common runtime compatibility paths such as `/bin`,
-`/sbin`, `/lib`, `/lib64`, and `/lib32` read-only when they exist.
-This avoids assuming a particular merged-`/usr` layout.
+`+T PATH` exposes an existing directory as a transient writable overlay.
+Initial reads come from the host directory, but writes, deletes,
+and replacements are stored in temporary sandbox storage and discarded when the sandbox exits.
 
-A small set of optional system configuration paths is also tried read-only when present:
-`/etc/alternatives`, `/etc/manpath.config`, `/etc/man_db.conf`, and `/etc/man.conf`.
+This is useful for tools that insist on writing to a cache or source tree even when you do not want host data modified.
 
-When `+N` is used, `skn` additionally tries read-only binds for `/etc/resolv.conf` and common Linux public CA root locations used by TLS libraries.
-It intentionally does not bind host `/etc/hosts` by default because that can expose local hostnames and network aliases;
-add it explicitly with `+R /etc/hosts` or trusted configuration if needed.
+`+T` is not a snapshot:
+concurrent host-side changes to the underlying directory are not hidden or made coherent,
+and reads can still expose secrets from that directory.
+Writes consume temporary sandbox storage.
+It also depends on `bubblewrap` and kernel overlayfs support,
+and may be unavailable with setuid bubblewrap.
 
-## Environment-configured binds
+## Environment configuration
 
 Additional read-only binds can be configured with a colon-separated environment variable:
 
@@ -217,11 +204,26 @@ Additional read-only binds can be configured with a colon-separated environment 
 export SKN_RO_BINDS="$HOME/.rustup:$HOME/.cargo/bin"
 ```
 
-`SKN_RO_BINDS` paths are bound read-only.
-Paths from this variable are not checked by `SKN_PATH_CHECK`;
-they are treated as trusted configuration chosen by the user.
-This is intended for stable user configuration, not for per-command access grants;
-use `+R` for per-command read-only binds.
+`SKN_RO_BINDS` paths are treated as trusted user configuration and are not checked by `SKN_PATH_CHECK`.
+Use this for stable setup, not for per-command access grants;
+use `+R` for those.
+
+## Threat model and non-goals
+
+`skn` is intended to reduce accidental exposure when running untrusted project code,
+build scripts, proc macros, tests, language servers, and similar tools.
+It is especially useful for preventing easy access to unrelated files in your home directory and for disabling network access by default.
+
+It is not a complete security solution.
+In particular:
+
+- it relies on the kernel and bubblewrap behaving correctly
+- it does not defend against kernel vulnerabilities or sandbox escapes
+- it does not make malicious code safe to run with secrets deliberately bound into the sandbox
+- `+P` preserves the caller environment, which may expose secrets through environment variables
+- persistent writable bind mounts allow sandboxed code to modify those paths
+
+Use it as a pragmatic containment layer, not as a guarantee that hostile code is harmless.
 
 ## Installing
 
@@ -242,12 +244,3 @@ Run the test suite with:
 ```
 
 See [`tests/README.md`](tests/README.md) for details.
-
-## Notes
-
-- `skn` intentionally has a small interface.
-- `skn` options use uppercase letters with a leading `+` so they are less likely to collide with wrapped command options.
-- `+P` is useful for compatibility, but it may expose secrets from the caller’s environment.
-- Network access is opt-in with `+N`.
-- The synthetic sandbox filesystem is remounted read-only after setup. Persistent writable access is limited to explicit writable binds such as `+W`; non-persistent writable access is limited to `/tmp` and explicit transient overlays such as `+T`. Writes elsewhere should fail rather than appear to succeed transiently.
-- The launch current directory is not bound or selected explicitly by `skn`. If it is unavailable inside the sandbox, `bwrap` handles this using its documented fallback behavior (`$HOME` if available, otherwise `/`). Use `+R`, `+W`, or `+T` when the command needs access to the current directory or another checked path.
