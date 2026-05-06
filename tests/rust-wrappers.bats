@@ -187,6 +187,18 @@ assert_args_not_contain() {
     fi
 }
 
+assert_args_not_contain_env() {
+    local lines=$1
+    local name=$2
+
+    if grep -E "^${name}=" "$lines" >/dev/null; then
+        printf 'expected args not to contain environment assignment for: %s\n' "$name" >&2
+        printf 'args:\n' >&2
+        sed 's/^/  /' "$lines" >&2
+        return 1
+    fi
+}
+
 assert_args_contain_pair() {
     local lines=$1
     local expected_option=$2
@@ -223,12 +235,14 @@ assert_args_contain_pair() {
 
     args="$BATS_TEST_TMPDIR/final.lines"
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
-    assert_args_contain "$args" "$fake_bin/cargo"
+    assert_args_contain "$args" 'cargo'
     assert_args_contain "$args" '+P'
     assert_args_contain "$args" '+W'
     assert_args_contain "$args" "$workspace"
     assert_args_contain "$args" '+E'
     assert_args_contain "$args" 'CARGO_NET_OFFLINE=true'
+    assert_args_not_contain_env "$args" CARGO
+    assert_args_not_contain_env "$args" PATH
     assert_args_contain "$args" 'build'
 }
 
@@ -370,19 +384,7 @@ assert_args_contain_pair() {
     assert_args_contain_pair "$args" '+R' "$HOME/.rustup"
 }
 
-@test 'skn-cargo requires SKN_REAL_CARGO when cargo resolves to the wrapper' {
-    rm -f "$fake_bin/cargo"
-    ln -s "$SKN_CARGO" "$fake_bin/cargo"
-
-    run "$SKN_CARGO" build
-    assert_status 2
-    assert_output_contains 'cargo resolves to this wrapper'
-    assert_output_contains 'SKN_REAL_CARGO'
-}
-
-@test 'skn-cargo uses SKN_REAL_CARGO when cargo is shadowed' {
-    rm -f "$fake_bin/cargo"
-    ln -s "$SKN_CARGO" "$fake_bin/cargo"
+@test 'skn-cargo uses SKN_REAL_CARGO and exports CARGO only when set' {
     export SKN_REAL_CARGO="$REAL_FAKE_CARGO"
 
     run "$SKN_CARGO" build
@@ -392,29 +394,10 @@ assert_args_contain_pair() {
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
     assert_args_contain "$args" "$REAL_FAKE_CARGO"
     assert_args_contain_pair "$args" '+E' "CARGO=$REAL_FAKE_CARGO"
+    assert_args_not_contain_env "$args" PATH
 }
 
-@test 'skn-cargo rejects SKN_REAL_CARGO pointing to itself' {
-    export SKN_REAL_CARGO="$SKN_CARGO"
-
-    run "$SKN_CARGO" build
-    assert_status 2
-    assert_output_contains 'SKN_REAL_CARGO points to this wrapper'
-}
-
-@test 'skn-rust-analyzer requires SKN_REAL_RUST_ANALYZER when rust-analyzer resolves to the wrapper' {
-    rm -f "$fake_bin/rust-analyzer"
-    ln -s "$SKN_RUST_ANALYZER" "$fake_bin/rust-analyzer"
-
-    run "$SKN_RUST_ANALYZER" --stdio
-    assert_status 2
-    assert_output_contains 'rust-analyzer resolves to this wrapper'
-    assert_output_contains 'SKN_REAL_RUST_ANALYZER'
-}
-
-@test 'skn-rust-analyzer uses SKN_REAL_RUST_ANALYZER when rust-analyzer is shadowed' {
-    rm -f "$fake_bin/rust-analyzer"
-    ln -s "$SKN_RUST_ANALYZER" "$fake_bin/rust-analyzer"
+@test 'skn-rust-analyzer uses SKN_REAL_RUST_ANALYZER and defaults CARGO to cargo' {
     export SKN_REAL_RUST_ANALYZER="$REAL_FAKE_RUST_ANALYZER"
 
     run "$SKN_RUST_ANALYZER" --stdio
@@ -423,25 +406,19 @@ assert_args_contain_pair() {
     args="$BATS_TEST_TMPDIR/final.lines"
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
     assert_args_contain "$args" "$REAL_FAKE_RUST_ANALYZER"
-    assert_args_contain_pair "$args" '+E' "CARGO=$fake_bin/cargo"
+    assert_args_contain_pair "$args" '+E' 'CARGO=cargo'
+    assert_args_not_contain_env "$args" PATH
 }
 
-@test 'skn-rust-analyzer rejects SKN_REAL_RUST_ANALYZER pointing to itself' {
-    export SKN_REAL_RUST_ANALYZER="$SKN_RUST_ANALYZER"
+@test 'skn-rust-analyzer uses SKN_REAL_CARGO for Cargo env' {
+    export SKN_REAL_CARGO="$REAL_FAKE_CARGO"
 
     run "$SKN_RUST_ANALYZER" --stdio
-    assert_status 2
-    assert_output_contains 'SKN_REAL_RUST_ANALYZER points to this wrapper'
-}
+    assert_success
 
-@test 'skn-rust-analyzer requires SKN_REAL_CARGO when cargo resolves to skn-cargo' {
-    rm -f "$fake_bin/cargo"
-    ln -s "$SKN_CARGO" "$fake_bin/cargo"
-
-    run "$SKN_RUST_ANALYZER" --stdio
-    assert_status 2
-    assert_output_contains 'cargo resolves to skn-cargo'
-    assert_output_contains 'SKN_REAL_CARGO'
+    args="$BATS_TEST_TMPDIR/final.lines"
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+    assert_args_contain_pair "$args" '+E' "CARGO=$REAL_FAKE_CARGO"
 }
 
 @test 'Rust wrappers surface skn +I failures and malformed headers' {
@@ -500,7 +477,7 @@ assert_args_contain_pair() {
 
     args="$BATS_TEST_TMPDIR/final.lines"
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
-    assert_args_contain "$args" "$fake_bin/rust-analyzer"
+    assert_args_contain "$args" 'rust-analyzer'
     assert_args_contain "$args" '+W'
     assert_args_contain "$args" "$workspace"
     assert_args_contain "$args" 'CARGO_NET_OFFLINE=true'

@@ -68,7 +68,7 @@ skn-cargo +N search serde
 
 Because the wrappers preserve the caller environment, an already-inherited `CARGO_NET_OFFLINE` value still applies even with `+N`.
 If you intentionally need a different networked Cargo operation,
-bypass this policy explicitly by invoking `skn` with the real Cargo path,
+bypass this policy explicitly by invoking `skn` with the real Cargo command,
 for example `skn "$SKN_REAL_CARGO" +N ...` in strict PATH setups.
 
 `cargo install` is intentionally not allowed with `+N`, because it downloads and builds code in one step.
@@ -155,7 +155,7 @@ For untrusted-work environments, you may choose to shadow Cargo and rust-analyze
 
 Do not overwrite rustup’s real proxies in `$CARGO_HOME/bin`;
 put symlinks or small launcher scripts in an earlier directory instead.
-In this mode, set explicit real-tool paths so the wrappers can fail closed instead of recursing into themselves:
+In this mode, set explicit real-tool commands to avoid recursing back into the wrappers:
 
 ```sh
 export SKN_REAL_CARGO="$HOME/.cargo/bin/cargo"
@@ -163,11 +163,23 @@ export SKN_REAL_RUST_ANALYZER="$HOME/.cargo/bin/rust-analyzer"
 PATH="$HOME/bin/skn-strict:$PATH" editor
 ```
 
-If `cargo` in `PATH` resolves to `skn-cargo`, `skn-cargo` refuses to run unless `SKN_REAL_CARGO` points to an executable that is not the wrapper.
-Similarly, if `rust-analyzer` in `PATH` resolves to `skn-rust-analyzer`,
-`skn-rust-analyzer` requires `SKN_REAL_RUST_ANALYZER`;
-it also requires `SKN_REAL_CARGO` when `cargo` resolves to `skn-cargo`.
-Inside the sandbox, the wrappers set `CARGO` and prefix `PATH` so rust-analyzer and Cargo subprocesses find the real Cargo inside the existing sandbox rather than starting a nested wrapper.
+The wrappers deliberately do not try to detect every recursive launcher setup.
+`skn-cargo` runs `${SKN_REAL_CARGO:-cargo}`.
+If `SKN_REAL_CARGO` is set, it also sets `CARGO` to that value inside the sandbox;
+otherwise it does not override `CARGO` and any inherited value remains visible,
+though Cargo normally sets `CARGO` for its own subprocesses.
+`skn-rust-analyzer` runs `${SKN_REAL_RUST_ANALYZER:-rust-analyzer}` and always sets `CARGO=${SKN_REAL_CARGO:-cargo}` inside the sandbox,
+because rust-analyzer uses `CARGO` to find Cargo.
+The `SKN_REAL_*` values are used literally as command names or paths;
+absolute paths are often useful in strict PATH setups but are not required.
+
+If you use launcher scripts to add local sandbox grants, put the real-tool override in the launcher, for example:
+
+```sh
+#!/bin/sh
+exec env SKN_REAL_CARGO="$HOME/.cargo/bin/cargo" \
+    skn-cargo +W "$HOME/.cargo-symlink-target" "$@"
+```
 
 Strict PATH mode is useful for avoiding accidental vanilla Cargo use,
 but it is not perfectly transparent.

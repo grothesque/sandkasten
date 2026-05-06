@@ -32,121 +32,6 @@ set -euo pipefail
 # messages would become too confusing.
 progname=skn-rust-analyzer
 
-resolve_executable_path() {
-    local label=$1
-    local path=$2
-    local resolved
-
-    if [[ ! -x $path ]]; then
-        echo "$progname: $label is not executable: $path" >&2
-        exit 2
-    fi
-
-    resolved=$(realpath -s -e -- "$path") || {
-        echo "$progname: cannot resolve $label: $path" >&2
-        exit 2
-    }
-
-    printf '%s\n' "$resolved"
-}
-
-path_is_skn_cargo_wrapper() {
-    local path=$1
-    local self self_dir found_skn_cargo
-
-    self=$(realpath -e -- "${BASH_SOURCE[0]}") || return 1
-    self_dir=$(dirname -- "$self")
-
-    if [[ -e $self_dir/skn-cargo && $path -ef $self_dir/skn-cargo ]]; then
-        return 0
-    fi
-
-    if found_skn_cargo=$(type -P skn-cargo 2>/dev/null) && [[ $path -ef $found_skn_cargo ]]; then
-        return 0
-    fi
-
-    return 1
-}
-
-resolve_real_rust_analyzer() {
-    local self found resolved
-
-    self=$(realpath -e -- "${BASH_SOURCE[0]}") || {
-        echo "$progname: cannot resolve wrapper path" >&2
-        exit 2
-    }
-
-    if [[ -n ${SKN_REAL_RUST_ANALYZER:-} ]]; then
-        if [[ $SKN_REAL_RUST_ANALYZER != /* ]]; then
-            echo "$progname: SKN_REAL_RUST_ANALYZER must be an absolute path" >&2
-            exit 2
-        fi
-        resolved=$(resolve_executable_path SKN_REAL_RUST_ANALYZER "$SKN_REAL_RUST_ANALYZER")
-        if [[ $resolved -ef $self ]]; then
-            echo "$progname: SKN_REAL_RUST_ANALYZER points to this wrapper" >&2
-            exit 2
-        fi
-        printf '%s\n' "$resolved"
-        return 0
-    fi
-
-    if ! found=$(type -P rust-analyzer 2>/dev/null); then
-        echo "$progname: rust-analyzer not found in PATH; set SKN_REAL_RUST_ANALYZER" >&2
-        exit 2
-    fi
-
-    if [[ $found -ef $self ]]; then
-        echo "$progname: rust-analyzer resolves to this wrapper; set SKN_REAL_RUST_ANALYZER to the real rust-analyzer" >&2
-        exit 2
-    fi
-
-    resolve_executable_path rust-analyzer "$found"
-}
-
-resolve_real_cargo() {
-    local self found resolved
-
-    self=$(realpath -e -- "${BASH_SOURCE[0]}") || {
-        echo "$progname: cannot resolve wrapper path" >&2
-        exit 2
-    }
-
-    if [[ -n ${SKN_REAL_CARGO:-} ]]; then
-        if [[ $SKN_REAL_CARGO != /* ]]; then
-            echo "$progname: SKN_REAL_CARGO must be an absolute path" >&2
-            exit 2
-        fi
-        resolved=$(resolve_executable_path SKN_REAL_CARGO "$SKN_REAL_CARGO")
-        if [[ $resolved -ef $self ]]; then
-            echo "$progname: SKN_REAL_CARGO points to this wrapper" >&2
-            exit 2
-        fi
-        if path_is_skn_cargo_wrapper "$resolved"; then
-            echo "$progname: SKN_REAL_CARGO points to skn-cargo" >&2
-            exit 2
-        fi
-        printf '%s\n' "$resolved"
-        return 0
-    fi
-
-    if ! found=$(type -P cargo 2>/dev/null); then
-        echo "$progname: cargo not found in PATH; set SKN_REAL_CARGO" >&2
-        exit 2
-    fi
-
-    if [[ $found -ef $self ]]; then
-        echo "$progname: cargo resolves to this wrapper; set SKN_REAL_CARGO to the real cargo" >&2
-        exit 2
-    fi
-
-    if path_is_skn_cargo_wrapper "$found"; then
-        echo "$progname: cargo resolves to skn-cargo; set SKN_REAL_CARGO to the real cargo" >&2
-        exit 2
-    fi
-
-    resolve_executable_path cargo "$found"
-}
-
 # Parses skn’s +I info header block. This delegates option parsing to skn
 # itself instead of mirroring skn’s option grammar here.
 network_enabled_from_skn_info() {
@@ -166,17 +51,14 @@ network_enabled_from_skn_info() {
     esac
 }
 
-real_rust_analyzer=$(resolve_real_rust_analyzer)
-real_cargo=$(resolve_real_cargo)
-real_cargo_dir=$(dirname -- "$real_cargo")
-sandbox_path=$real_cargo_dir${PATH:+:$PATH}
+real_rust_analyzer=${SKN_REAL_RUST_ANALYZER:-rust-analyzer}
+real_cargo=${SKN_REAL_CARGO:-cargo}
 
 skn_args=(
     skn
     "$real_rust_analyzer"
     +P
     +E "CARGO=$real_cargo"
-    +E "PATH=$sandbox_path"
 )
 
 if workspace_manifest=$("$real_cargo" locate-project --workspace --message-format=plain 2>/dev/null); then
