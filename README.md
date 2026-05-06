@@ -204,7 +204,8 @@ Additional read-only binds can be configured with a colon-separated environment 
 export SKN_RO_BINDS="$HOME/.rustup:$HOME/.cargo/bin"
 ```
 
-`SKN_RO_BINDS` paths are treated as trusted user configuration and are not checked by `SKN_PATH_CHECK`.
+`SKN_RO_BINDS` entries must be absolute paths.
+They are treated as trusted user configuration and are not checked by `SKN_PATH_CHECK`.
 Use this for stable setup, not for per-command access grants;
 use `+R` for those.
 

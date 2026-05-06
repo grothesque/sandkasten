@@ -51,7 +51,7 @@ Environment:
   SKN_PATH_CHECK  mandatory unless +S or +I is used; command used to validate
                   paths from +R/+W/+T; executed directly with the path as its
                   only argument. Set to 'true' to disable.
-  SKN_RO_BINDS    colon-separated paths to bind read-only
+  SKN_RO_BINDS    colon-separated absolute paths to bind read-only
 EOF
 }
 
@@ -201,21 +201,36 @@ add_queued_binds() {
     done
 }
 
+queue_env_ro_bind() {
+    local path=$1
+
+    if [[ -z $path ]]; then
+        echo "$progname: empty path in SKN_RO_BINDS" >&2
+        offer_help_and_exit
+    fi
+
+    if [[ $path != /* ]]; then
+        echo "$progname: SKN_RO_BINDS entries must be absolute paths: $path" >&2
+        offer_help_and_exit
+    fi
+
+    queue_bind +R "$path" 0
+}
+
 queue_env_ro_binds() {
-    local var_name=$1
     local value path
 
-    [[ -v $var_name ]] || return 0
-    value=${!var_name}
+    [[ -v SKN_RO_BINDS ]] || return 0
+    value=$SKN_RO_BINDS
     [[ -n $value ]] || return 0
 
     while [[ $value == *:* ]]; do
         path=${value%%:*}
-        queue_bind +R "$path" 0
+        queue_env_ro_bind "$path"
         value=${value#*:}
     done
 
-    queue_bind +R "$value" 0
+    queue_env_ro_bind "$value"
 }
 
 add_base_bwrap_setup() {
@@ -314,7 +329,7 @@ bind_queue=()
 bwrap_args=()
 bwrap_display_lines=()
 
-queue_env_ro_binds SKN_RO_BINDS
+queue_env_ro_binds
 
 # Parse wrapper options. The remaining arguments are for the command.
 #

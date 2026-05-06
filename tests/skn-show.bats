@@ -121,6 +121,23 @@ load 'helpers/common'
     assert_output_contains 'skn: sandboxed command: cargo +nightly build'
 }
 
+@test '+S accepts absolute SKN_RO_BINDS entries' {
+    dir="$BATS_TEST_TMPDIR/ro-bind"
+
+    run env -u SKN_PATH_CHECK SKN_RO_BINDS="$dir" "$SKN" true +S
+
+    assert_success
+    assert_output_contains "--ro-bind $dir $dir"
+}
+
+@test 'SKN_RO_BINDS rejects relative paths' {
+    run env -u SKN_PATH_CHECK SKN_RO_BINDS=relative "$SKN" true +S
+
+    assert_status 2
+    assert_output_contains 'SKN_RO_BINDS'
+    assert_output_contains 'absolute'
+}
+
 @test '+S preserves user bind ordering' {
     dir="$BATS_TEST_TMPDIR/project"
     mkdir -p "$dir/out"
