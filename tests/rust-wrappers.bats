@@ -323,6 +323,47 @@ assert_args_contain_pair() {
     assert_args_not_contain_env "$args" PATH
 }
 
+@test 'skn-cargo fails clearly when strict PATH symlinks cargo to the wrapper' {
+    rm -f "$fake_bin/cargo"
+    ln -s "$SKN_CARGO" "$fake_bin/cargo"
+
+    run "$fake_bin/cargo" build
+    assert_status 2
+    assert_output_contains 'recursive Cargo wrapper invocation'
+    assert_output_contains 'SKN_REAL_CARGO'
+    [[ ! -e $FAKE_SKN_INFO_ARGS ]]
+    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+}
+
+@test 'skn-cargo fails clearly when strict PATH launches the wrapper from a script' {
+    cat >"$fake_bin/cargo" <<EOF
+#!/bin/bash
+exec "$SKN_CARGO" "\$@"
+EOF
+    chmod +x "$fake_bin/cargo"
+
+    run "$fake_bin/cargo" build
+    assert_status 2
+    assert_output_contains 'recursive Cargo wrapper invocation'
+    assert_output_contains 'SKN_REAL_CARGO'
+    [[ ! -e $FAKE_SKN_INFO_ARGS ]]
+    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+}
+
+@test 'skn-cargo strict PATH works when SKN_REAL_CARGO is set' {
+    rm -f "$fake_bin/cargo"
+    ln -s "$SKN_CARGO" "$fake_bin/cargo"
+    export SKN_REAL_CARGO="$REAL_FAKE_CARGO"
+
+    run "$fake_bin/cargo" build
+    assert_success
+
+    args="$BATS_TEST_TMPDIR/final.lines"
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+    assert_args_contain "$args" "$REAL_FAKE_CARGO"
+    assert_args_contain_pair "$args" '+E' "CARGO=$REAL_FAKE_CARGO"
+}
+
 @test 'skn-rust-analyzer uses SKN_REAL_RUST_ANALYZER and defaults CARGO to cargo' {
     export SKN_REAL_RUST_ANALYZER="$REAL_FAKE_RUST_ANALYZER"
 
@@ -345,6 +386,27 @@ assert_args_contain_pair() {
     args="$BATS_TEST_TMPDIR/final.lines"
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
     assert_args_contain_pair "$args" '+E' "CARGO=$REAL_FAKE_CARGO"
+}
+
+@test 'skn-rust-analyzer recursion guard fails clearly' {
+    run env SKN_RUST_ANALYZER_WRAPPER_ACTIVE=1 "$SKN_RUST_ANALYZER" --stdio
+    assert_status 2
+    assert_output_contains 'recursive rust-analyzer wrapper invocation'
+    assert_output_contains 'SKN_REAL_RUST_ANALYZER'
+    [[ ! -e $FAKE_SKN_INFO_ARGS ]]
+    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+}
+
+@test 'skn-rust-analyzer fails clearly when Cargo resolves to skn-cargo without SKN_REAL_CARGO' {
+    rm -f "$fake_bin/cargo"
+    ln -s "$SKN_CARGO" "$fake_bin/cargo"
+
+    run "$SKN_RUST_ANALYZER" --stdio
+    assert_status 2
+    assert_output_contains 'recursive Cargo wrapper invocation'
+    assert_output_contains 'SKN_REAL_CARGO'
+    [[ ! -e $FAKE_SKN_INFO_ARGS ]]
+    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 }
 
 @test 'Rust wrappers surface skn +I failures and malformed headers' {

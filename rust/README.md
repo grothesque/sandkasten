@@ -155,7 +155,7 @@ For untrusted-work environments, you may choose to shadow Cargo and rust-analyze
 
 Do not overwrite rustup’s real proxies in `$CARGO_HOME/bin`;
 put symlinks or small launcher scripts in an earlier directory instead.
-In this mode, set explicit real-tool commands to avoid recursing back into the wrappers:
+In this mode, set explicit real-tool commands so the wrappers do not recurse back into themselves:
 
 ```sh
 export SKN_REAL_CARGO="$HOME/.cargo/bin/cargo"
@@ -163,7 +163,10 @@ export SKN_REAL_RUST_ANALYZER="$HOME/.cargo/bin/rust-analyzer"
 PATH="$HOME/bin/skn-strict:$PATH" editor
 ```
 
-The wrappers deliberately do not try to detect every recursive launcher setup.
+Strict PATH mode requires these explicit real-tool settings.
+The wrappers use simple recursion guards to turn symlink or launcher-script loops into clear errors instead of hangs.
+For example, `cargo -> skn-cargo` and `cargo` scripts that run `exec skn-cargo "$@"` are rejected once they re-enter the wrapper.
+
 `skn-cargo` runs `${SKN_REAL_CARGO:-cargo}`.
 If `SKN_REAL_CARGO` is set, it also sets `CARGO` to that value inside the sandbox;
 otherwise it does not override `CARGO` and any inherited value remains visible,
@@ -171,7 +174,7 @@ though Cargo normally sets `CARGO` for its own subprocesses.
 `skn-rust-analyzer` runs `${SKN_REAL_RUST_ANALYZER:-rust-analyzer}` and always sets `CARGO=${SKN_REAL_CARGO:-cargo}` inside the sandbox,
 because rust-analyzer uses `CARGO` to find Cargo.
 The `SKN_REAL_*` values are used literally as command names or paths;
-absolute paths are often useful in strict PATH setups but are not required.
+absolute paths are recommended in strict PATH setups.
 
 If you use launcher scripts to add local sandbox grants, put the real-tool override in the launcher, for example:
 

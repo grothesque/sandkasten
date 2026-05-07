@@ -37,6 +37,34 @@ set -euo pipefail
 # would become too confusing.
 progname=skn-cargo
 
+if [[ ${SKN_CARGO_WRAPPER_ACTIVE:-} == 1 ]]; then
+    echo "$progname: recursive Cargo wrapper invocation; set SKN_REAL_CARGO to the real Cargo command" >&2
+    exit 2
+fi
+export SKN_CARGO_WRAPPER_ACTIVE=1
+
+locate_workspace_manifest() {
+    local locate_stderr status
+
+    locate_stderr=$(mktemp) || exit 2
+
+    if workspace_manifest=$("$real_cargo" locate-project --workspace --message-format=plain 2>"$locate_stderr"); then
+        rm -f -- "$locate_stderr"
+        return 0
+    else
+        status=$?
+    fi
+
+    if grep -F 'recursive Cargo wrapper invocation' "$locate_stderr" >/dev/null; then
+        cat "$locate_stderr" >&2
+        rm -f -- "$locate_stderr"
+        exit "$status"
+    fi
+
+    rm -f -- "$locate_stderr"
+    return 1
+}
+
 # Parses skn’s +I info header block. This delegates option parsing to skn
 # itself instead of mirroring skn’s option grammar here.
 parse_skn_info() {
@@ -119,7 +147,7 @@ if [[ -n ${SKN_REAL_CARGO:-} ]]; then
     skn_args+=(+E "CARGO=$real_cargo")
 fi
 
-if workspace_manifest=$("$real_cargo" locate-project --workspace --message-format=plain 2>/dev/null); then
+if locate_workspace_manifest; then
     skn_args+=(+W "$(dirname -- "$workspace_manifest")")
 fi
 

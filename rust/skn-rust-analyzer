@@ -32,6 +32,34 @@ set -euo pipefail
 # messages would become too confusing.
 progname=skn-rust-analyzer
 
+if [[ ${SKN_RUST_ANALYZER_WRAPPER_ACTIVE:-} == 1 ]]; then
+    echo "$progname: recursive rust-analyzer wrapper invocation; set SKN_REAL_RUST_ANALYZER to the real rust-analyzer command" >&2
+    exit 2
+fi
+export SKN_RUST_ANALYZER_WRAPPER_ACTIVE=1
+
+locate_workspace_manifest() {
+    local locate_stderr status
+
+    locate_stderr=$(mktemp) || exit 2
+
+    if workspace_manifest=$("$real_cargo" locate-project --workspace --message-format=plain 2>"$locate_stderr"); then
+        rm -f -- "$locate_stderr"
+        return 0
+    else
+        status=$?
+    fi
+
+    if grep -F 'recursive Cargo wrapper invocation' "$locate_stderr" >/dev/null; then
+        cat "$locate_stderr" >&2
+        rm -f -- "$locate_stderr"
+        exit "$status"
+    fi
+
+    rm -f -- "$locate_stderr"
+    return 1
+}
+
 # Parses skn’s +I info header block. This delegates option parsing to skn
 # itself instead of mirroring skn’s option grammar here.
 network_enabled_from_skn_info() {
@@ -54,6 +82,10 @@ network_enabled_from_skn_info() {
 real_rust_analyzer=${SKN_REAL_RUST_ANALYZER:-rust-analyzer}
 real_cargo=${SKN_REAL_CARGO:-cargo}
 
+if [[ -z ${SKN_REAL_CARGO:-} ]]; then
+    export SKN_CARGO_WRAPPER_ACTIVE=1
+fi
+
 skn_args=(
     skn
     "$real_rust_analyzer"
@@ -61,7 +93,7 @@ skn_args=(
     +E "CARGO=$real_cargo"
 )
 
-if workspace_manifest=$("$real_cargo" locate-project --workspace --message-format=plain 2>/dev/null); then
+if locate_workspace_manifest; then
     skn_args+=(+W "$(dirname -- "$workspace_manifest")")
 else
     skn_args+=(+R "$(pwd)")
