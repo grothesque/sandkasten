@@ -160,6 +160,12 @@ bind trusted configuration explicitly if a command needs it.
 
 Except in `+S` show mode or `+I` info mode, `skn` requires `SKN_PATH_CHECK` to be set.
 It names a command used to validate paths before they are exposed through `+R`, `+W`, or `+T`.
+The same check is used for all three variants.
+This is intentional:
+the check is a coarse “may this path be shared with untrusted code at all?” policy,
+primarily guarding against accidental exposure of sensitive data.
+It is not a separate integrity policy deciding whether a readable path is also safe to modify;
+callers should use `+W` only for paths whose persistent modification is acceptable.
 
 The command is executed directly, without shell evaluation,
 with the checked path as its only argument.
