@@ -10,7 +10,8 @@ setup() {
 
     FAKE_SKN_INFO_ARGS="$BATS_TEST_TMPDIR/skn-info.args"
     FAKE_SKN_FINAL_ARGS="$BATS_TEST_TMPDIR/skn-final.args"
-    export FAKE_SKN_INFO_ARGS FAKE_SKN_FINAL_ARGS
+    FAKE_CARGO_LOCATE_CWD="$BATS_TEST_TMPDIR/cargo-locate.cwd"
+    export FAKE_SKN_INFO_ARGS FAKE_SKN_FINAL_ARGS FAKE_CARGO_LOCATE_CWD
 
     cat >"$fake_bin/skn" <<'EOF'
 #!/bin/bash
@@ -52,6 +53,8 @@ EOF
 set -euo pipefail
 
 if [[ ${1:-} == locate-project ]]; then
+    [[ -z ${FAKE_CARGO_LOCATE_CWD:-} ]] || printf '%s\n' "$PWD" >"$FAKE_CARGO_LOCATE_CWD"
+
     case ${FAKE_CARGO_LOCATE:-fail} in
         success)
             printf '%s\n' "${FAKE_WORKSPACE_MANIFEST:?}"
@@ -183,6 +186,51 @@ assert_args_contain_pair() {
     assert_args_contain "$args" 'build'
 }
 
+@test 'skn-cargo honors top-level -C for workspace detection' {
+    parent="$BATS_TEST_TMPDIR/cargo-c-parent"
+    launch="$parent/launch"
+    workspace="$parent/workspace"
+    mkdir -p "$launch" "$workspace"
+    touch "$workspace/Cargo.toml"
+    export FAKE_CARGO_LOCATE=success
+    export FAKE_WORKSPACE_MANIFEST="$workspace/Cargo.toml"
+
+    run bash -c 'cd "$1" && "$2" -C ../workspace build' _ "$launch" "$SKN_CARGO"
+    assert_success
+
+    [[ $(<"$FAKE_CARGO_LOCATE_CWD") == "$workspace" ]]
+
+    args="$BATS_TEST_TMPDIR/final-c.lines"
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+    assert_args_contain_pair "$args" '+W' "$workspace"
+    assert_args_contain_pair "$args" '+V' 'CARGO_NET_OFFLINE=true'
+    assert_args_contain "$args" '-C'
+    assert_args_contain "$args" '../workspace'
+    assert_args_contain "$args" 'build'
+}
+
+@test 'skn-cargo treats -C after the Cargo subcommand as a command argument' {
+    parent="$BATS_TEST_TMPDIR/cargo-c-after-parent"
+    launch="$parent/launch"
+    workspace="$parent/workspace"
+    mkdir -p "$launch" "$workspace"
+    touch "$workspace/Cargo.toml"
+    export FAKE_CARGO_LOCATE=success
+    export FAKE_WORKSPACE_MANIFEST="$workspace/Cargo.toml"
+
+    run bash -c 'cd "$1" && "$2" build -C ../workspace' _ "$launch" "$SKN_CARGO"
+    assert_success
+
+    [[ $(<"$FAKE_CARGO_LOCATE_CWD") == "$launch" ]]
+
+    args="$BATS_TEST_TMPDIR/final-c-after.lines"
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+    assert_args_contain_pair "$args" '+V' 'CARGO_NET_OFFLINE=true'
+    assert_args_contain "$args" 'build'
+    assert_args_contain "$args" '-C'
+    assert_args_contain "$args" '../workspace'
+}
+
 @test 'skn-cargo enables network automatically for selected dependency-management subcommands' {
     local subcommand
 
@@ -264,6 +312,16 @@ assert_args_contain_pair() {
     assert_success
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$BATS_TEST_TMPDIR/final-z.lines"
     assert_args_contain "$BATS_TEST_TMPDIR/final-z.lines" '+N'
+
+    run "$SKN_CARGO" -C . fetch
+    assert_success
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$BATS_TEST_TMPDIR/final-c-fetch.lines"
+    assert_args_contain "$BATS_TEST_TMPDIR/final-c-fetch.lines" '+N'
+
+    run "$SKN_CARGO" -C. update
+    assert_success
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$BATS_TEST_TMPDIR/final-c-attached-update.lines"
+    assert_args_contain "$BATS_TEST_TMPDIR/final-c-attached-update.lines" '+N'
 }
 
 @test 'skn-cargo refuses network for build-like subcommands after Cargo top-level options' {
@@ -272,6 +330,10 @@ assert_args_contain_pair() {
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 
     run "$SKN_CARGO" +N +nightly --color always test
+    assert_status 2
+    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+
+    run "$SKN_CARGO" +N -C . build
     assert_status 2
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 }
@@ -294,6 +356,10 @@ assert_args_contain_pair() {
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 
     run "$SKN_CARGO" +N --future-option fetch
+    assert_status 2
+    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+
+    run "$SKN_CARGO" +N -C
     assert_status 2
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 }
@@ -345,7 +411,8 @@ assert_args_contain_pair() {
 
     run "$fake_bin/cargo" build
     assert_status 2
-    [[ ! -e $FAKE_SKN_INFO_ARGS ]]
+    assert_output_contains 'recursive Cargo wrapper invocation'
+    [[ -e $FAKE_SKN_INFO_ARGS ]]
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 }
 
@@ -358,7 +425,8 @@ EOF
 
     run "$fake_bin/cargo" build
     assert_status 2
-    [[ ! -e $FAKE_SKN_INFO_ARGS ]]
+    assert_output_contains 'recursive Cargo wrapper invocation'
+    [[ -e $FAKE_SKN_INFO_ARGS ]]
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 }
 

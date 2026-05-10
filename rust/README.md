@@ -84,6 +84,7 @@ skn-cargo +S build
 ```
 
 When `skn-cargo` detects a Cargo workspace, it binds that workspace writable.
+Cargo’s top-level `-C DIR` option is honored for this workspace detection.
 Outside a detected workspace, it does not implicitly bind the current directory,
 so commands such as `cargo new foo` fail unless you explicitly grant writable access,
 for example with `skn-cargo +W. new foo`.

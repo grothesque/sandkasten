@@ -28,11 +28,18 @@ fi
 export SKN_CARGO_WRAPPER_ACTIVE=1
 
 locate_workspace_manifest() {
+    local cargo_cwd=$1
+    local use_cargo_cwd=$2
     local locate_stderr status
 
     locate_stderr=$(mktemp) || exit 2
 
-    if workspace_manifest=$("$real_cargo" locate-project --workspace --message-format=plain 2>"$locate_stderr"); then
+    if workspace_manifest=$({
+        if ((use_cargo_cwd)); then
+            cd -- "$cargo_cwd" || exit
+        fi
+        "$real_cargo" locate-project --workspace --message-format=plain
+    } 2>"$locate_stderr"); then
         rm -f -- "$locate_stderr"
         return 0
     else
@@ -77,7 +84,11 @@ parse_skn_info() {
     cargo_argv=("${skn_command_argv[@]:1}")
 }
 
-cargo_subcommand_for_policy() {
+analyze_cargo_args() {
+    cargo_subcommand=
+    cargo_cwd=
+    cargo_has_cwd=0
+
     # Cargo accepts an optional leading rustup-style +toolchain argument.
     if (($#)) && [[ $1 == +* ]]; then
         shift
@@ -92,18 +103,29 @@ cargo_subcommand_for_policy() {
                 [[ $2 == script* ]] && return 1
                 shift 2
                 ;;
+            -C)
+                (($# >= 2)) || return 1
+                cargo_cwd=$2
+                cargo_has_cwd=1
+                shift 2
+                ;;
+            -C?*)
+                cargo_cwd=${1:2}
+                cargo_has_cwd=1
+                shift
+                ;;
             -V|--version|--list|--locked|--offline|--frozen|-h|--help|-q|--quiet|--verbose|-v|-vv|-vvv|-vvvv|-vvvvv)
                 shift
                 ;;
             --color=*|--config=*|--explain=*|-Z?*)
                 shift
                 ;;
-            --color|--config|--explain|-C)
+            --color|--config|--explain)
                 (($# >= 2)) || return 1
                 shift 2
                 ;;
             -*) return 1 ;;
-            *) printf '%s\n' "$1"; return 0 ;;
+            *) cargo_subcommand=$1; return 0 ;;
         esac
     done
 
@@ -122,7 +144,30 @@ if [[ -n ${SKN_REAL_CARGO:-} ]]; then
     skn_args+=(+V "CARGO=$real_cargo")
 fi
 
-if locate_workspace_manifest; then
+skn_info_output=$("${skn_args[@]}" +I "$@") || exit $?
+
+if ! parse_skn_info <<<"$skn_info_output"; then
+    echo "$progname: internal error parsing skn +I output" >&2
+    exit 2
+fi
+
+if analyze_cargo_args "${cargo_argv[@]}"; then
+    if [[ $network_cargo_subcommands == *" $cargo_subcommand "* ]]; then
+        [[ $skn_network_state == disabled ]] && skn_args+=(+N)
+    elif [[ $skn_network_state == enabled ]]; then
+        echo "$progname: refusing +N: network is not allowed for this Cargo invocation" >&2
+        exit 2
+    else
+        skn_args+=(+V CARGO_NET_OFFLINE=true)
+    fi
+elif [[ $skn_network_state == enabled ]]; then
+    echo "$progname: refusing +N: cannot safely identify Cargo subcommand" >&2
+    exit 2
+else
+    skn_args+=(+V CARGO_NET_OFFLINE=true)
+fi
+
+if locate_workspace_manifest "$cargo_cwd" "$cargo_has_cwd"; then
     skn_args+=(+W "$(dirname -- "$workspace_manifest")")
 fi
 
@@ -132,28 +177,5 @@ cargo_home=${CARGO_HOME:-${HOME:+$HOME/.cargo}}
 
 rustup_home=${RUSTUP_HOME:-${HOME:+$HOME/.rustup}}
 [[ -n $rustup_home && -e $rustup_home ]] && skn_args+=(+R "$rustup_home")
-
-skn_info_output=$("${skn_args[@]}" +I "$@") || exit $?
-
-if ! parse_skn_info <<<"$skn_info_output"; then
-    echo "$progname: internal error parsing skn +I output" >&2
-    exit 2
-fi
-
-if ! subcommand=$(cargo_subcommand_for_policy "${cargo_argv[@]}"); then
-    if [[ $skn_network_state == enabled ]]; then
-        echo "$progname: refusing +N: cannot safely identify Cargo subcommand" >&2
-        exit 2
-    fi
-
-    skn_args+=(+V CARGO_NET_OFFLINE=true)
-elif [[ $network_cargo_subcommands == *" $subcommand "* ]]; then
-    [[ $skn_network_state == disabled ]] && skn_args+=(+N)
-elif [[ $skn_network_state == enabled ]]; then
-    echo "$progname: refusing +N: network is not allowed for this Cargo invocation" >&2
-    exit 2
-else
-    skn_args+=(+V CARGO_NET_OFFLINE=true)
-fi
 
 exec "${skn_args[@]}" "$@"
