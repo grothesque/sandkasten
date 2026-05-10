@@ -52,6 +52,9 @@ Environment:
                   paths from +R/+W/+T; executed directly with the path as its
                   only argument. Set to 'true' to disable.
   SKN_RO_BINDS    colon-separated absolute paths to bind read-only
+
+Nested skn invocations are supported: when +P is not used, skn still sets
+SKN_PATH_CHECK=true inside the sandbox and preserves SKN_RO_BINDS if set.
 EOF
 }
 
@@ -131,6 +134,27 @@ add_queued_envs() {
     for ((i = 0; i < ${#env_queue[@]}; i += 2)); do
         add_bwrap_args --setenv "${env_queue[i]}" "${env_queue[i + 1]}"
     done
+}
+
+env_queued() {
+    local name=$1
+    local i
+
+    for ((i = 0; i < ${#env_queue[@]}; i += 2)); do
+        [[ ${env_queue[i]} == "$name" ]] && return 0
+    done
+
+    return 1
+}
+
+add_nested_skn_env() {
+    if ! env_queued SKN_PATH_CHECK; then
+        add_bwrap_args --setenv SKN_PATH_CHECK true
+    fi
+
+    if [[ -v SKN_RO_BINDS ]] && ! env_queued SKN_RO_BINDS; then
+        add_bwrap_args --setenv SKN_RO_BINDS "$SKN_RO_BINDS"
+    fi
 }
 
 check_path() {
@@ -455,6 +479,10 @@ else
     for key in PATH HOME USER LOGNAME TERM COLORTERM LANG "${!LC_@}"; do
         [[ -v $key ]] && add_bwrap_args --setenv "$key" "${!key}"
     done
+
+    # Make nested skn invocations work with the same already-exposed filesystem
+    # baseline, without preserving the whole caller environment.
+    add_nested_skn_env
 
     add_queued_envs
 fi

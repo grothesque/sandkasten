@@ -148,6 +148,7 @@ inspect `./skn` or use `+S` when you need to see the current plan.
 
 By default, the environment is mostly cleared.
 Use `+E` to pass specific values or `+P` to preserve the caller environment.
+For nested `skn` use, the cleared environment still sets `SKN_PATH_CHECK=true` inside the sandbox and preserves `SKN_RO_BINDS` when it is set.
 Be careful with `+P`:
 environment variables often contain secrets or host-specific paths.
 
@@ -214,6 +215,13 @@ export SKN_RO_BINDS="$HOME/.rustup:$HOME/.cargo/bin"
 They are treated as trusted user configuration and are not checked by `SKN_PATH_CHECK`.
 Use this for stable setup, not for per-command access grants;
 use `+R` for those.
+
+## Nested `skn` usage
+
+When working inside a `skn` sandbox, it is often handy to use scripts and aliases that invoke `skn` themselves,
+resulting in nested sandboxes.
+To make nested usage convenient, `skn` passes `SKN_RO_BINDS` through and sets `SKN_PATH_CHECK=true`.
+Unset or override these variables before invoking the inner `skn` if you want a narrower nested sandbox.
 
 ## Threat model and non-goals
 

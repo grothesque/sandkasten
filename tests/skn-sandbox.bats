@@ -76,6 +76,34 @@ load 'helpers/common'
     assert_success
 }
 
+@test 'nested skn inherits path-check bypass and read-only bind baseline' {
+    require_working_skn
+
+    dir="$BATS_TEST_TMPDIR/ro-baseline"
+    mkdir -p "$dir"
+    printf 'hello\n' >"$dir/file"
+
+    run env SKN_PATH_CHECK=true SKN_RO_BINDS="$dir" "$SKN" bash +R "$SKN" -- -c '
+        [[ ${SKN_PATH_CHECK:-} == true ]]
+        [[ ${SKN_RO_BINDS:-} == "$2" ]]
+        "$1" /bin/bash -- -c '\''grep -qx hello "$1/file"'\'' /bin/bash "$2"
+    ' bash "$SKN" "$dir"
+    assert_success
+}
+
+@test 'nested skn cannot make an outer read-only bind writable' {
+    require_working_skn
+
+    dir="$BATS_TEST_TMPDIR/outer-read-only"
+    mkdir -p "$dir"
+
+    run env SKN_PATH_CHECK=true "$SKN" bash +R "$SKN" +R "$dir" -- -c '
+        "$1" /bin/bash +W "$2" -- -c '\''! printf data >"$1/new"'\'' /bin/bash "$2"
+    ' bash "$SKN" "$dir"
+    assert_success
+    assert_file_not_exists "$dir/new"
+}
+
 @test '+T with nested +W discards ordinary writes but preserves explicitly writable subtree' {
     require_working_transient_overlay
 
