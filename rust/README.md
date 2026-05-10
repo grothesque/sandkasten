@@ -28,7 +28,7 @@ alias cargo=skn-cargo
 Fetch dependencies with network access:
 
 ```sh
-skn-cargo +N fetch
+skn-cargo fetch
 ```
 
 Then build offline:
@@ -37,15 +37,15 @@ Then build offline:
 skn-cargo build
 ```
 
-Without `+N`, `skn-cargo` sets `CARGO_NET_OFFLINE=true` inside the sandbox.
-Cargo arguments are otherwise passed through unchanged, except that leading arguments in `skn`’s current or reserved uppercase `+` option namespace must be passed after `--`.
-
-With `+N`, `skn-cargo` only allows `fetch`, `update`, `add`,
-`upgrade`, `generate-lockfile`, and `search`.
-Other subcommands, including `build`, `check`, `test`, `run`,
-`doc`, `install`, custom subcommands other than `upgrade`,
-and the no-subcommand default, are refused because they may execute build scripts,
+`skn-cargo` enables network access automatically for the dependency-management subcommands listed in the `network_cargo_subcommands` variable near the top of `rust/skn-cargo`.
+By default, this is `fetch`, `update`, `add`, `generate-lockfile`,
+and `search`, because these commands are not expected to execute project code.
+For other subcommands, including `build`, `check`, `test`,
+`run`, `doc`, `install`, custom subcommands other than configured exceptions,
+and the no-subcommand default, `skn-cargo` sets `CARGO_NET_OFFLINE=true` inside the sandbox.
+Explicit `+N` is accepted for the dependency-management commands and refused for the other subcommands because they may execute build scripts,
 proc macros, tests, or other project code with network access.
+Cargo arguments are otherwise passed through unchanged, except that leading arguments in `skn`’s current or reserved uppercase `+` option namespace must be passed after `--`.
 
 For compatibility with toolchains and project-specific Cargo configuration,
 the Rust wrappers pass `+E` to `skn` and therefore preserve the caller environment by default.
@@ -58,15 +58,15 @@ If you need Cargo registry credentials, prefer configuring Cargo to retrieve tok
 For example, Cargo supports `registry.global-credential-providers`,
 which can invoke a password manager or other helper to supply tokens when needed.
 
-With `+N`, network access is enabled and the wrapper does not set `CARGO_NET_OFFLINE`:
+For dependency-management commands, network access is enabled and the wrapper does not set `CARGO_NET_OFFLINE`:
 
 ```sh
-skn-cargo +N update
-skn-cargo +N add serde
-skn-cargo +N search serde
+skn-cargo update
+skn-cargo add serde
+skn-cargo search serde
 ```
 
-Because the wrappers preserve the caller environment, an already-inherited `CARGO_NET_OFFLINE` value still applies even with `+N`.
+Because the wrappers preserve the caller environment, an already-inherited `CARGO_NET_OFFLINE` value still applies even when `skn-cargo` enables network access.
 If you intentionally need a different networked Cargo operation,
 bypass this policy explicitly by invoking `skn` with the real Cargo command,
 for example `skn "$SKN_REAL_CARGO" +N ...` in strict PATH setups.
@@ -74,7 +74,7 @@ for example `skn "$SKN_REAL_CARGO" +N ...` in strict PATH setups.
 `cargo install` is intentionally not allowed with `+N`, because it downloads and builds code in one step.
 When source is available, use a two-stage local-source workflow instead:
 fetch or update dependencies with network access, then install from the local path offline,
-for example `skn-cargo +N fetch --locked` followed by `skn-cargo install --path . --locked`.
+for example `skn-cargo fetch --locked` followed by `skn-cargo install --path . --locked`.
 For crates already present in Cargo’s cache, `skn-cargo install --offline --locked CRATE` may also work.
 
 Use `+S` to show the generated sandbox command without running Cargo:
@@ -107,12 +107,12 @@ Typical use:
 skn-rust-analyzer
 ```
 
-As with `skn-cargo`, network is disabled by default and `CARGO_NET_OFFLINE=true` is set.
-Unlike `skn` itself, `skn-rust-analyzer` refuses `+N`, because rust-analyzer can execute project code through Cargo subprocesses.
+Unlike `skn-cargo` dependency-management commands, `skn-rust-analyzer` disables network by default and sets `CARGO_NET_OFFLINE=true`.
+Like `skn` itself, it accepts `+N` syntactically, but then refuses it because rust-analyzer can execute project code through Cargo subprocesses.
 Fetch dependencies separately, then run rust-analyzer offline:
 
 ```sh
-skn-cargo +N fetch
+skn-cargo fetch
 skn-rust-analyzer
 ```
 
@@ -136,12 +136,10 @@ skn-cargo          # from rust/skn-cargo
 skn-rust-analyzer  # from rust/skn-rust-analyzer
 ```
 
-Then use aliases or editor-specific configuration where desired:
+Then use an alias or editor-specific configuration where desired:
 
 ```sh
 alias cargo=skn-cargo
-alias cargo-fetch='skn-cargo +N fetch'
-alias cargo-update='skn-cargo +N update'
 ```
 
 ### Strict PATH mode

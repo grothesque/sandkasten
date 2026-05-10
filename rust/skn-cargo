@@ -2,40 +2,24 @@
 #
 # Run cargo under skn with defaults suitable for building untrusted projects.
 #
-# This wrapper intentionally stays small and mostly lets skn parse its own
-# options.  Leading skn + options may be given before cargo arguments, e.g.:
+# This wrapper intentionally stays small and delegates skn option parsing to
+# skn itself. Commands in network_cargo_subcommands get network automatically;
+# other Cargo invocations run offline, and explicit +N is refused for them.
 #
-#   skn-cargo +N fetch
+# Examples:
+#   skn-cargo fetch
 #   skn-cargo +W ../dep build
 #   skn-cargo +T ~/.cargo build
-#
-# Without +N, the wrapper asks skn to set CARGO_NET_OFFLINE=true inside the
-# sandbox.  This preserves the important separation between fetching
-# dependencies with network access and building without it:
-#
-#   skn-cargo +N fetch
-#   skn-cargo build
-#
-# With +N, only Cargo subcommands that are expected not to execute project code
-# are allowed: fetch, update, add, upgrade, generate-lockfile, and search.
-#
-# Cargo arguments are otherwise passed through unchanged, so syntax such as
-# +toolchain remains Cargo’s concern.  The only overlap is with leading values
-# that match skn’s current or reserved + option syntax: for example,
-# +Wsomething is parsed as a writable bind, and +Xsomething is rejected as a
-# reserved skn option.  Pass such values after -- if needed.
-#
-# For convenience, define aliases or shell functions, for example:
-#
-#   alias cargo=skn-cargo
-#   alias cargo-fetch='skn-cargo +N fetch'
-#   alias cargo-update='skn-cargo +N update'
 
 set -euo pipefail
 
 # Hardcode name because this script might be used as ‘cargo’, and error messages
 # would become too confusing.
 progname=skn-cargo
+
+# Space-padded list. Do not add commands that can execute project code, such as
+# build, check, test, run, doc, install, or most custom commands.
+network_cargo_subcommands=' fetch update add generate-lockfile search '
 
 if [[ ${SKN_CARGO_WRAPPER_ACTIVE:-} == 1 ]]; then
     echo "$progname: recursive Cargo wrapper invocation; set SKN_REAL_CARGO to the real Cargo command" >&2
@@ -126,15 +110,6 @@ cargo_subcommand_for_policy() {
     return 0
 }
 
-cargo_network_subcommand_allowed() {
-    local subcommand=$1
-
-    case $subcommand in
-        fetch|update|add|upgrade|generate-lockfile|search) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
 real_cargo=${SKN_REAL_CARGO:-cargo}
 
 skn_args=(
@@ -165,23 +140,18 @@ if ! parse_skn_info <<<"$skn_info_output"; then
     exit 2
 fi
 
-if [[ $skn_network_state == enabled ]]; then
-    if ! subcommand=$(cargo_subcommand_for_policy "${cargo_argv[@]}"); then
+if ! subcommand=$(cargo_subcommand_for_policy "${cargo_argv[@]}"); then
+    if [[ $skn_network_state == enabled ]]; then
         echo "$progname: refusing +N: cannot safely identify Cargo subcommand" >&2
-        echo "$progname: network-enabled skn-cargo is limited to: fetch, update, add, upgrade, generate-lockfile, search" >&2
         exit 2
     fi
 
-    if ! cargo_network_subcommand_allowed "$subcommand"; then
-        if [[ -n $subcommand ]]; then
-            echo "$progname: refusing +N with cargo subcommand '$subcommand'" >&2
-        else
-            echo "$progname: refusing +N without an allowed Cargo subcommand" >&2
-        fi
-        echo "$progname: network-enabled skn-cargo is limited to: fetch, update, add, upgrade, generate-lockfile, search" >&2
-        echo "$progname: fetch dependencies with +N, then build, test, or run offline" >&2
-        exit 2
-    fi
+    skn_args+=(+V CARGO_NET_OFFLINE=true)
+elif [[ $network_cargo_subcommands == *" $subcommand "* ]]; then
+    [[ $skn_network_state == disabled ]] && skn_args+=(+N)
+elif [[ $skn_network_state == enabled ]]; then
+    echo "$progname: refusing +N: network is not allowed for this Cargo invocation" >&2
+    exit 2
 else
     skn_args+=(+V CARGO_NET_OFFLINE=true)
 fi

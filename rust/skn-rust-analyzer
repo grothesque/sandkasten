@@ -110,7 +110,7 @@ skn_info_output=$("${skn_args[@]}" +I "$@") || exit $?
 
 if network_enabled_from_skn_info <<<"$skn_info_output"; then
     echo "$progname: refusing +N: rust-analyzer can execute project code via Cargo subprocesses" >&2
-    echo "$progname: fetch dependencies separately, for example with skn-cargo +N fetch, then run rust-analyzer offline" >&2
+    echo "$progname: fetch dependencies separately, for example with skn-cargo fetch, then run rust-analyzer offline" >&2
     exit 2
 else
     case $? in

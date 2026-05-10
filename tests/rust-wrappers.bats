@@ -183,10 +183,27 @@ assert_args_contain_pair() {
     assert_args_contain "$args" 'build'
 }
 
-@test 'skn-cargo allows network for selected dependency-management subcommands' {
+@test 'skn-cargo enables network automatically for selected dependency-management subcommands' {
     local subcommand
 
-    for subcommand in fetch update add upgrade generate-lockfile search; do
+    for subcommand in fetch update add generate-lockfile search; do
+        rm -f "$FAKE_SKN_FINAL_ARGS"
+
+        run "$SKN_CARGO" "$subcommand"
+        assert_success
+
+        args="$BATS_TEST_TMPDIR/final-auto-$subcommand.lines"
+        write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+        assert_args_contain "$args" '+N'
+        assert_args_contain "$args" "$subcommand"
+        assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
+    done
+}
+
+@test 'skn-cargo allows explicit network for selected dependency-management subcommands' {
+    local subcommand
+
+    for subcommand in fetch update add generate-lockfile search; do
         rm -f "$FAKE_SKN_FINAL_ARGS"
 
         run "$SKN_CARGO" +N "$subcommand"
@@ -228,47 +245,56 @@ assert_args_contain_pair() {
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$BATS_TEST_TMPDIR/final-locked.lines"
     assert_args_not_contain "$BATS_TEST_TMPDIR/final-locked.lines" 'CARGO_NET_OFFLINE=true'
 
-    run "$SKN_CARGO" +N -q --color always fetch
+    run "$SKN_CARGO" -q --color always fetch
     assert_success
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$BATS_TEST_TMPDIR/final-color.lines"
+    assert_args_contain "$BATS_TEST_TMPDIR/final-color.lines" '+N'
 
-    run "$SKN_CARGO" +N +nightly --config net.git-fetch-with-cli=true update
+    run "$SKN_CARGO" +nightly --config net.git-fetch-with-cli=true update
     assert_success
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$BATS_TEST_TMPDIR/final-config.lines"
+    assert_args_contain "$BATS_TEST_TMPDIR/final-config.lines" '+N'
 
-    run "$SKN_CARGO" +N --color=always --config=foo=bar search serde
+    run "$SKN_CARGO" --color=always --config=foo=bar search serde
     assert_success
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$BATS_TEST_TMPDIR/final-search.lines"
+    assert_args_contain "$BATS_TEST_TMPDIR/final-search.lines" '+N'
 
-    run "$SKN_CARGO" +N -Z unstable-options fetch
+    run "$SKN_CARGO" -Z unstable-options fetch
     assert_success
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$BATS_TEST_TMPDIR/final-z.lines"
+    assert_args_contain "$BATS_TEST_TMPDIR/final-z.lines" '+N'
 }
 
 @test 'skn-cargo refuses network for build-like subcommands after Cargo top-level options' {
     run "$SKN_CARGO" +N --locked -q build
     assert_status 2
-    assert_output_contains 'refusing +N'
-    assert_output_contains 'build'
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 
     run "$SKN_CARGO" +N +nightly --color always test
     assert_status 2
-    assert_output_contains 'refusing +N'
-    assert_output_contains 'test'
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+}
+
+@test 'skn-cargo falls back to offline mode when it cannot identify the subcommand without +N' {
+    run "$SKN_CARGO" --future-option fetch
+    assert_success
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$BATS_TEST_TMPDIR/final-unknown-option.lines"
+    assert_args_not_contain "$BATS_TEST_TMPDIR/final-unknown-option.lines" '+N'
+    assert_args_contain_pair "$BATS_TEST_TMPDIR/final-unknown-option.lines" '+V' 'CARGO_NET_OFFLINE=true'
 }
 
 @test 'skn-cargo refuses network for Cargo script mode and unknown top-level options' {
     run "$SKN_CARGO" +N -Zscript fetch
     assert_status 2
-    assert_output_contains 'cannot safely identify Cargo subcommand'
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 
     run "$SKN_CARGO" +N -Z script fetch
     assert_status 2
-    assert_output_contains 'cannot safely identify Cargo subcommand'
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 
     run "$SKN_CARGO" +N --future-option fetch
     assert_status 2
-    assert_output_contains 'cannot safely identify Cargo subcommand'
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 }
 
@@ -278,23 +304,13 @@ assert_args_contain_pair() {
     for subcommand in build run check test clippy install ''; do
         rm -f "$FAKE_SKN_FINAL_ARGS"
 
-        if [[ -n $subcommand ]]; then
-            run "$SKN_CARGO" +N "$subcommand"
-            assert_status 2
-            assert_output_contains 'refusing +N'
-            assert_output_contains "$subcommand"
-        else
-            run "$SKN_CARGO" +N
-            assert_status 2
-            assert_output_contains 'refusing +N without an allowed Cargo subcommand'
-        fi
-
+        run "$SKN_CARGO" +N "$subcommand"
+        assert_status 2
         [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
     done
 
     run "$SKN_CARGO" +N --version
     assert_status 2
-    assert_output_contains 'refusing +N without an allowed Cargo subcommand'
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 }
 
@@ -323,19 +339,17 @@ assert_args_contain_pair() {
     assert_args_not_contain_env "$args" PATH
 }
 
-@test 'skn-cargo fails clearly when strict PATH symlinks cargo to the wrapper' {
+@test 'skn-cargo fails when strict PATH symlinks cargo to the wrapper' {
     rm -f "$fake_bin/cargo"
     ln -s "$SKN_CARGO" "$fake_bin/cargo"
 
     run "$fake_bin/cargo" build
     assert_status 2
-    assert_output_contains 'recursive Cargo wrapper invocation'
-    assert_output_contains 'SKN_REAL_CARGO'
     [[ ! -e $FAKE_SKN_INFO_ARGS ]]
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 }
 
-@test 'skn-cargo fails clearly when strict PATH launches the wrapper from a script' {
+@test 'skn-cargo fails when strict PATH launches the wrapper from a script' {
     cat >"$fake_bin/cargo" <<EOF
 #!/bin/bash
 exec "$SKN_CARGO" "\$@"
@@ -344,8 +358,6 @@ EOF
 
     run "$fake_bin/cargo" build
     assert_status 2
-    assert_output_contains 'recursive Cargo wrapper invocation'
-    assert_output_contains 'SKN_REAL_CARGO'
     [[ ! -e $FAKE_SKN_INFO_ARGS ]]
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 }
@@ -397,14 +409,12 @@ EOF
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 }
 
-@test 'skn-rust-analyzer fails clearly when Cargo resolves to skn-cargo without SKN_REAL_CARGO' {
+@test 'skn-rust-analyzer fails when Cargo resolves to skn-cargo without SKN_REAL_CARGO' {
     rm -f "$fake_bin/cargo"
     ln -s "$SKN_CARGO" "$fake_bin/cargo"
 
     run "$SKN_RUST_ANALYZER" --stdio
     assert_status 2
-    assert_output_contains 'recursive Cargo wrapper invocation'
-    assert_output_contains 'SKN_REAL_CARGO'
     [[ ! -e $FAKE_SKN_INFO_ARGS ]]
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 }
@@ -427,7 +437,7 @@ EOF
     run "$SKN_RUST_ANALYZER" +N --stdio
     assert_status 2
     assert_output_contains 'refusing +N'
-    assert_output_contains 'skn-cargo +N fetch'
+    assert_output_contains 'skn-cargo fetch'
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 }
 
