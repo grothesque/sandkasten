@@ -9,7 +9,7 @@ usage() {
 Usage: $progname COMMAND [skn-options] [--] [COMMAND-args...]
 
 Run COMMAND inside a bwrap sandbox intended for untrusted code. The sandbox
-has a private /tmp, a mostly cleared environment unless +P is used, and no
+has a private /tmp, a mostly cleared environment unless +E is used, and no
 network access unless enabled with +N.
 
 The skn command line interface is unusual: the command to be sandboxed comes
@@ -36,10 +36,11 @@ skn-options:
   +R PATH         bind PATH read-only into the sandbox
   +W PATH         bind PATH writable into the sandbox
   +T PATH         bind directory PATH transient-writable; writes are discarded
-  +E VAR=VALUE    set environment VAR to VALUE inside the sandbox
+  +V VAR          pass environment VAR into the sandbox if it is set
+  +V VAR=VALUE    set environment VAR to VALUE inside the sandbox
   +A ARG          prepend ARG to COMMAND arguments
   +N              enable network access
-  +P              preserve caller environment instead of clearing it
+  +E              preserve caller environment instead of clearing it
   +S              show the sandbox plan after parsing, then exit
   +I              show only the parsed skn info header, then exit
   --              stop parsing skn options
@@ -52,13 +53,16 @@ Environment:
                   paths from +R/+W/+T; executed directly with the path as its
                   only argument. Set to 'true' to disable.
   SKN_RO_BINDS    colon-separated absolute paths to bind read-only
+  SKN_PASS_VARS   colon-separated variable names to pass when set
 
-Nested skn invocations are supported: when +P is not used, skn still sets
-SKN_PATH_CHECK=true inside the sandbox and preserves SKN_RO_BINDS if set.
+Nested skn invocations are supported: skn sets SKN_PATH_CHECK=true inside the
+sandbox and preserves SKN_RO_BINDS and SKN_PASS_VARS if set. Explicit +V options
+and SKN_PASS_VARS entries take precedence over these nested defaults.
 EOF
 }
 
-offer_help_and_exit() {
+error() {
+    echo "$progname: $*" >&2
     echo "Try '$progname --help' for more information." >&2
     exit 2
 }
@@ -108,31 +112,95 @@ print_bwrap_command() {
     print_shell_words '    ' '' "$@"
 }
 
-queue_env() {
-    local assignment=$1
+valid_env_name() {
+    [[ $1 =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]
+}
+
+load_original_env() {
+    local entry name value
+
+    ((env_loaded)) && return 0
+
+    # Read the process’s original environment directly. This avoids collisions
+    # with shell variables used internally by this script, including lowercase
+    # environment names and Bash’s own special variables.
+    while IFS= read -r -d '' entry; do
+        name=${entry%%=*}
+        value=${entry#*=}
+        env_present["$name"]=1
+        env_values["$name"]=$value
+    done </proc/$$/environ
+
+    env_loaded=1
+}
+
+lookup_original_env() {
+    local name=$1
+
+    load_original_env
+    env_value=
+
+    if [[ ${env_present[$name]+set} ]]; then
+        env_value=${env_values[$name]}
+        return 0
+    fi
+
+    return 1
+}
+
+read_original_env_command() {
+    local entry
+
+    exec_cmd=(env -i)
+    while IFS= read -r -d '' entry; do
+        exec_cmd+=("$entry")
+    done </proc/$$/environ
+    exec_cmd+=(bwrap)
+}
+
+queue_env_spec() {
+    local spec=$1
     local name value
 
-    if [[ $assignment != *=* ]]; then
-        echo "$progname: invalid argument for +E: expected VAR=VALUE" >&2
-        offer_help_and_exit
+    if [[ $spec == *=* ]]; then
+        name=${spec%%=*}
+        value=${spec#*=}
+        valid_env_name "$name" || error "invalid environment variable name for +V: $name"
+        env_queue+=(set "$name" "$value")
+    else
+        name=$spec
+        valid_env_name "$name" || error "invalid environment variable name for +V: $name"
+        env_queue+=(pass "$name" '')
     fi
-
-    name=${assignment%%=*}
-    value=${assignment#*=}
-
-    if [[ ! $name =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
-        echo "$progname: invalid environment variable name for +E: $name" >&2
-        offer_help_and_exit
-    fi
-
-    env_queue+=("$name" "$value")
 }
 
 add_queued_envs() {
-    local i
+    local mode name value i
+    local -A env_overridden=()
 
-    for ((i = 0; i < ${#env_queue[@]}; i += 2)); do
-        add_bwrap_args --setenv "${env_queue[i]}" "${env_queue[i + 1]}"
+    for ((i = 0; i < ${#env_queue[@]}; i += 3)); do
+        mode=${env_queue[i]}
+        name=${env_queue[i + 1]}
+        value=${env_queue[i + 2]}
+
+        case $mode in
+            set)
+                add_bwrap_args --setenv "$name" "$value"
+                env_overridden["$name"]=1
+                ;;
+            pass)
+                if ((preserve_env)) && [[ ! ${env_overridden[$name]+set} ]]; then
+                    continue
+                fi
+
+                if lookup_original_env "$name"; then
+                    add_bwrap_args --setenv "$name" "$env_value"
+                elif [[ ${env_overridden[$name]+set} ]]; then
+                    add_bwrap_args --unsetenv "$name"
+                fi
+                unset "env_overridden[$name]"
+                ;;
+        esac
     done
 }
 
@@ -140,8 +208,8 @@ env_queued() {
     local name=$1
     local i
 
-    for ((i = 0; i < ${#env_queue[@]}; i += 2)); do
-        [[ ${env_queue[i]} == "$name" ]] && return 0
+    for ((i = 0; i < ${#env_queue[@]}; i += 3)); do
+        [[ ${env_queue[i + 1]} == "$name" ]] && return 0
     done
 
     return 1
@@ -155,16 +223,17 @@ add_nested_skn_env() {
     if [[ -v SKN_RO_BINDS ]] && ! env_queued SKN_RO_BINDS; then
         add_bwrap_args --setenv SKN_RO_BINDS "$SKN_RO_BINDS"
     fi
+
+    if [[ -v SKN_PASS_VARS ]] && ! env_queued SKN_PASS_VARS; then
+        add_bwrap_args --setenv SKN_PASS_VARS "$SKN_PASS_VARS"
+    fi
 }
 
 check_path() {
     local label=$1
     local path=$2
 
-    "$SKN_PATH_CHECK" "$path" || {
-        echo "$progname: SKN_PATH_CHECK rejected $path ($label) for sharing with sandbox" >&2
-        offer_help_and_exit
-    }
+    "$SKN_PATH_CHECK" "$path" || error "SKN_PATH_CHECK rejected $path ($label) for sharing with sandbox"
 }
 
 queue_bind() {
@@ -172,10 +241,7 @@ queue_bind() {
     local path=$2
     local needs_check=${3:-0}
 
-    if [[ -z $path ]]; then
-        echo "$progname: empty path for $option" >&2
-        offer_help_and_exit
-    fi
+    [[ -n $path ]] || error "empty path for $option"
 
     bind_queue+=("$option" "$path" "$needs_check")
 }
@@ -195,19 +261,13 @@ add_bind() {
         realpath_args=(-s -e)
     fi
 
-    abs_path=$(realpath "${realpath_args[@]}" -- "$path") || {
-        echo "$progname: invalid path for $option: $path" >&2
-        offer_help_and_exit
-    }
+    abs_path=$(realpath "${realpath_args[@]}" -- "$path") || error "invalid path for $option: $path"
 
     case $option in
         +R) add_bwrap_args --ro-bind "$abs_path" "$abs_path" ;;
         +W) add_bwrap_args --bind "$abs_path" "$abs_path" ;;
         +T)
-            if ((! show_mode)) && [[ ! -d $abs_path ]]; then
-                echo "$progname: +T requires an existing directory: $path" >&2
-                offer_help_and_exit
-            fi
+            ((show_mode)) || [[ -d $abs_path ]] || error "+T requires an existing directory: $path"
             add_bwrap_args --overlay-src "$abs_path" --tmp-overlay "$abs_path"
             ;;
         *)
@@ -228,36 +288,50 @@ add_queued_binds() {
 queue_env_ro_bind() {
     local path=$1
 
-    if [[ -z $path ]]; then
-        echo "$progname: empty path in SKN_RO_BINDS" >&2
-        offer_help_and_exit
-    fi
-
-    if [[ $path != /* ]]; then
-        echo "$progname: SKN_RO_BINDS entries must be absolute paths: $path" >&2
-        offer_help_and_exit
-    fi
+    [[ -n $path ]] || error "empty path in SKN_RO_BINDS"
+    [[ $path == /* ]] || error "SKN_RO_BINDS entries must be absolute paths: $path"
 
     queue_bind +R "$path" 0
 }
 
-queue_env_ro_binds() {
-    local value path
+queue_colon_list() {
+    local value=$1
+    local callback=$2
+    local item
 
-    [[ -v SKN_RO_BINDS ]] || return 0
-    value=$SKN_RO_BINDS
     [[ -n $value ]] || return 0
 
     while [[ $value == *:* ]]; do
-        path=${value%%:*}
-        queue_env_ro_bind "$path"
+        item=${value%%:*}
+        "$callback" "$item"
         value=${value#*:}
     done
 
-    queue_env_ro_bind "$value"
+    "$callback" "$value"
+}
+
+queue_env_ro_binds() {
+    [[ -v SKN_RO_BINDS ]] || return 0
+    queue_colon_list "$SKN_RO_BINDS" queue_env_ro_bind
+}
+
+queue_pass_var_name() {
+    local name=$1
+
+    [[ -n $name ]] || error "empty variable name in SKN_PASS_VARS"
+    valid_env_name "$name" || error "SKN_PASS_VARS entries must be variable names, not assignments: $name"
+
+    env_queue+=(pass "$name" '')
+}
+
+queue_pass_vars() {
+    [[ -v SKN_PASS_VARS ]] || return 0
+    queue_colon_list "$SKN_PASS_VARS" queue_pass_var_name
 }
 
 add_base_bwrap_setup() {
+    local path
+
     add_bwrap_args --unshare-all
     add_bwrap_args --new-session
     add_bwrap_args --die-with-parent
@@ -330,16 +404,10 @@ esac
 cmd=$1
 shift
 
-if [[ -z $cmd ]]; then
-    echo "$progname: empty COMMAND" >&2
-    offer_help_and_exit
-fi
+[[ -n $cmd ]] || error "empty COMMAND"
 
 case $cmd in
-    +[A-Z]*)
-        echo "$progname: COMMAND comes before skn options; got '$cmd' as COMMAND" >&2
-        offer_help_and_exit
-        ;;
+    +[A-Z]*) error "COMMAND comes before skn options; got '$cmd' as COMMAND" ;;
 esac
 
 network=0
@@ -352,14 +420,18 @@ env_queue=()
 bind_queue=()
 bwrap_args=()
 bwrap_display_lines=()
+env_loaded=0
+declare -A env_present=()
+declare -A env_values=()
 
 queue_env_ro_binds
+queue_pass_vars
 
 # Parse wrapper options. The remaining arguments are for the command.
 #
 # Note: if we ever decide to support further optional sandbox relaxations, let
 # us consider adding a master option (perhaps +X for relax), e.g. +X ipc.  The
-# current +N and +P can then remain aliases for, respectively, +X net and +X
+# current +N and +E can then remain aliases for, respectively, +X net and +X
 # env.
 while (($#)); do
     case $1 in
@@ -373,9 +445,9 @@ while (($#)); do
             shift
             continue
             ;;
-        +P)
+        +E)
             preserve_env=1
-            skn_option_args+=(+P)
+            skn_option_args+=(+E)
             shift
             continue
             ;;
@@ -391,10 +463,7 @@ while (($#)); do
             ;;
         +R|+W|+T)
             option=$1
-            if (($# < 2)); then
-                echo "$progname: missing argument for $option" >&2
-                offer_help_and_exit
-            fi
+            (($# >= 2)) || error "missing argument for $option"
             path=$2
             shift 2
             ;;
@@ -403,28 +472,22 @@ while (($#)); do
             path=${1:2}
             shift
             ;;
-        +E)
-            if (($# < 2)); then
-                echo "$progname: missing argument for +E" >&2
-                offer_help_and_exit
-            fi
-            queue_env "$2"
-            skn_option_args+=(+E "$2")
+        +V)
+            (($# >= 2)) || error "missing argument for +V"
+            queue_env_spec "$2"
+            skn_option_args+=(+V "$2")
             shift 2
             continue
             ;;
-        +E?*)
-            assignment=${1:2}
-            queue_env "$assignment"
-            skn_option_args+=(+E "$assignment")
+        +V?*)
+            env_spec=${1:2}
+            queue_env_spec "$env_spec"
+            skn_option_args+=(+V "$env_spec")
             shift
             continue
             ;;
         +A)
-            if (($# < 2)); then
-                echo "$progname: missing argument for +A" >&2
-                offer_help_and_exit
-            fi
+            (($# >= 2)) || error "missing argument for +A"
             command_args+=("$2")
             shift 2
             continue
@@ -436,8 +499,7 @@ while (($#)); do
             ;;
         +[A-Z]*)
             echo "$progname: reserved skn option: $1" >&2
-            echo "$progname: use -- before command arguments that start with +<uppercase>" >&2
-            offer_help_and_exit
+            error "use -- before command arguments that start with +<uppercase>"
             ;;
         *)
             break
@@ -453,10 +515,7 @@ if ((info_mode)); then
     exit 0
 fi
 
-if ((! show_mode)) && [[ -z ${SKN_PATH_CHECK:-} ]]; then
-    echo "$progname: SKN_PATH_CHECK is not set" >&2
-    offer_help_and_exit
-fi
+((show_mode)) || [[ -n ${SKN_PATH_CHECK:-} ]] || error "SKN_PATH_CHECK is not set"
 
 add_base_bwrap_setup
 
@@ -494,7 +553,13 @@ if ((show_mode)); then
     exit 0
 fi
 
-exec bwrap \
+if ((preserve_env)); then
+    read_original_env_command
+else
+    exec_cmd=(bwrap)
+fi
+
+exec "${exec_cmd[@]}" \
     "${bwrap_args[@]}" \
     -- \
     "$cmd" \

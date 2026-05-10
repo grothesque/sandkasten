@@ -175,9 +175,9 @@ assert_args_contain_pair() {
     args="$BATS_TEST_TMPDIR/final.lines"
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
     assert_args_contain "$args" 'cargo'
-    assert_args_contain "$args" '+P'
+    assert_args_contain "$args" '+E'
     assert_args_contain_pair "$args" '+W' "$workspace"
-    assert_args_contain_pair "$args" '+E' 'CARGO_NET_OFFLINE=true'
+    assert_args_contain_pair "$args" '+V' 'CARGO_NET_OFFLINE=true'
     assert_args_not_contain_env "$args" CARGO
     assert_args_not_contain_env "$args" PATH
     assert_args_contain "$args" 'build'
@@ -319,7 +319,7 @@ assert_args_contain_pair() {
     args="$BATS_TEST_TMPDIR/final.lines"
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
     assert_args_contain "$args" "$REAL_FAKE_CARGO"
-    assert_args_contain_pair "$args" '+E' "CARGO=$REAL_FAKE_CARGO"
+    assert_args_contain_pair "$args" '+V' "CARGO=$REAL_FAKE_CARGO"
     assert_args_not_contain_env "$args" PATH
 }
 
@@ -361,7 +361,7 @@ EOF
     args="$BATS_TEST_TMPDIR/final.lines"
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
     assert_args_contain "$args" "$REAL_FAKE_CARGO"
-    assert_args_contain_pair "$args" '+E' "CARGO=$REAL_FAKE_CARGO"
+    assert_args_contain_pair "$args" '+V' "CARGO=$REAL_FAKE_CARGO"
 }
 
 @test 'skn-rust-analyzer uses SKN_REAL_RUST_ANALYZER and defaults CARGO to cargo' {
@@ -373,7 +373,7 @@ EOF
     args="$BATS_TEST_TMPDIR/final.lines"
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
     assert_args_contain "$args" "$REAL_FAKE_RUST_ANALYZER"
-    assert_args_contain_pair "$args" '+E' 'CARGO=cargo'
+    assert_args_contain_pair "$args" '+V' 'CARGO=cargo'
     assert_args_not_contain_env "$args" PATH
 }
 
@@ -385,7 +385,7 @@ EOF
 
     args="$BATS_TEST_TMPDIR/final.lines"
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
-    assert_args_contain_pair "$args" '+E' "CARGO=$REAL_FAKE_CARGO"
+    assert_args_contain_pair "$args" '+V' "CARGO=$REAL_FAKE_CARGO"
 }
 
 @test 'skn-rust-analyzer recursion guard fails clearly' {
@@ -465,7 +465,7 @@ EOF
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
     assert_args_contain "$args" 'rust-analyzer'
     assert_args_contain_pair "$args" '+W' "$workspace"
-    assert_args_contain_pair "$args" '+E' 'CARGO_NET_OFFLINE=true'
+    assert_args_contain_pair "$args" '+V' 'CARGO_NET_OFFLINE=true'
 }
 
 @test 'skn-rust-analyzer falls back to read-only cwd outside Cargo workspaces' {

@@ -140,11 +140,11 @@ real_cargo=${SKN_REAL_CARGO:-cargo}
 skn_args=(
     skn
     "$real_cargo"
-    +P
+    +E
 )
 
 if [[ -n ${SKN_REAL_CARGO:-} ]]; then
-    skn_args+=(+E "CARGO=$real_cargo")
+    skn_args+=(+V "CARGO=$real_cargo")
 fi
 
 if locate_workspace_manifest; then
@@ -183,7 +183,7 @@ if [[ $skn_network_state == enabled ]]; then
         exit 2
     fi
 else
-    skn_args+=(+E CARGO_NET_OFFLINE=true)
+    skn_args+=(+V CARGO_NET_OFFLINE=true)
 fi
 
 exec "${skn_args[@]}" "$@"

@@ -64,7 +64,7 @@ Additional integrations have their own requirements:
 
 ```sh
 skn make
-skn cargo +P +W . -- build
+skn cargo +E +W . -- build
 skn make +T .
 skn curl +N -- https://example.com/
 ```
@@ -105,10 +105,11 @@ Run `skn --help` for the exact command reference.
 +R PATH         bind PATH read-only into the sandbox
 +W PATH         bind PATH writable into the sandbox
 +T PATH         bind directory PATH transient-writable; writes are discarded
-+E VAR=VALUE    set environment VAR to VALUE inside the sandbox
++V VAR          pass environment VAR into the sandbox if it is set
++V VAR=VALUE    set environment VAR to VALUE inside the sandbox
 +A ARG          prepend ARG to COMMAND arguments
 +N              enable network access
-+P              preserve caller environment instead of clearing it
++E              preserve caller environment instead of clearing it
 +S              show the sandbox plan after parsing, then exit
 +I              show only the parsed skn info header, then exit
 --              stop parsing skn options
@@ -147,9 +148,11 @@ The exact built-in bind list is intentionally an implementation detail;
 inspect `./skn` or use `+S` when you need to see the current plan.
 
 By default, the environment is mostly cleared.
-Use `+E` to pass specific values or `+P` to preserve the caller environment.
-For nested `skn` use, the cleared environment still sets `SKN_PATH_CHECK=true` inside the sandbox and preserves `SKN_RO_BINDS` when it is set.
-Be careful with `+P`:
+Use `+V` to pass or set specific variables, or `+E` to preserve the caller environment.
+For example, `+V PYTHONPATH` passes `PYTHONPATH` when it is set and omits it otherwise,
+while `+V PYTHONPATH=/path` sets a specific value.
+For nested `skn` use, the cleared environment still sets `SKN_PATH_CHECK=true` inside the sandbox and preserves `SKN_RO_BINDS` and `SKN_PASS_VARS` when they are set.
+Be careful with `+E`:
 environment variables often contain secrets or host-specific paths.
 
 Network access is disabled by default.
@@ -216,11 +219,22 @@ They are treated as trusted user configuration and are not checked by `SKN_PATH_
 Use this for stable setup, not for per-command access grants;
 use `+R` for those.
 
+Additional variables to pass when set can be configured with a colon-separated list of variable names:
+
+```sh
+export SKN_PASS_VARS=PYTHONPATH:SSH_AUTH_SOCK:DISPLAY
+```
+
+`SKN_PASS_VARS` entries must be variable names, not assignments.
+Use `+V VAR=VALUE` for per-command assignments.
+
 ## Nested `skn` usage
 
 When working inside a `skn` sandbox, it is often handy to use scripts and aliases that invoke `skn` themselves,
 resulting in nested sandboxes.
-To make nested usage convenient, `skn` passes `SKN_RO_BINDS` through and sets `SKN_PATH_CHECK=true`.
+To make nested usage convenient, `skn` passes `SKN_RO_BINDS` and `SKN_PASS_VARS` through and sets `SKN_PATH_CHECK=true` by default.
+Explicit `+V` options or `SKN_PASS_VARS` entries, including `SKN_PATH_CHECK`,
+take precedence over these nested defaults.
 Unset or override these variables before invoking the inner `skn` if you want a narrower nested sandbox.
 
 ## Threat model and non-goals
@@ -235,7 +249,7 @@ In particular:
 - it relies on the kernel and bubblewrap behaving correctly
 - it does not defend against kernel vulnerabilities or sandbox escapes
 - it does not make malicious code safe to run with secrets deliberately bound into the sandbox
-- `+P` preserves the caller environment, which may expose secrets through environment variables
+- `+E` preserves the caller environment, which may expose secrets through environment variables
 - persistent writable bind mounts allow sandboxed code to modify those paths
 
 Use it as a pragmatic containment layer, not as a guarantee that hostile code is harmless.

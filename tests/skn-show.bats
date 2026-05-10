@@ -18,7 +18,7 @@ load 'helpers/common'
 }
 
 @test '+S reports network, preserved environment, and prepended command args' {
-    run env -u SKN_PATH_CHECK "$SKN" echo +S +N +P +A -n -- hello
+    run env -u SKN_PATH_CHECK "$SKN" echo +S +N +E +A -n -- hello
 
     assert_success
     assert_output_contains 'skn: sandboxed command: echo -n hello'
@@ -81,7 +81,11 @@ load 'helpers/common'
 }
 
 @test '+S still rejects malformed skn options' {
-    run env -u SKN_PATH_CHECK "$SKN" true +S +E 1BAD=value
+    run env -u SKN_PATH_CHECK "$SKN" true +S +V 1BAD=value
+    assert_status 2
+    assert_output_contains 'environment variable name'
+
+    run env -u SKN_PATH_CHECK "$SKN" true +S +V 1BAD
     assert_status 2
     assert_output_contains 'environment variable name'
 
@@ -136,6 +140,40 @@ load 'helpers/common'
     assert_status 2
     assert_output_contains 'SKN_RO_BINDS'
     assert_output_contains 'absolute'
+}
+
+@test '+S shows variables requested with +V and SKN_PASS_VARS' {
+    run env -u SKN_PATH_CHECK FROM_OPTION=option FROM_CONFIG=config \
+        SKN_PASS_VARS=FROM_CONFIG:ABSENT "$SKN" true +S +V FROM_OPTION +V EXPLICIT=value
+
+    assert_success
+    assert_output_contains '--setenv SKN_PASS_VARS FROM_CONFIG:ABSENT'
+    assert_output_contains '--setenv FROM_CONFIG config'
+    assert_output_contains '--setenv FROM_OPTION option'
+    assert_output_contains '--setenv EXPLICIT value'
+}
+
+@test 'bare +V pass-through is a no-op when the full environment is preserved' {
+    run env -u SKN_PATH_CHECK FROM_OPTION=option FROM_CONFIG=config \
+        SKN_PASS_VARS=FROM_CONFIG "$SKN" true +S +E +V FROM_OPTION +V EXPLICIT=value
+
+    assert_success
+    assert_output_contains 'skn: environment preserved'
+    assert_output_not_contains '--setenv FROM_CONFIG config'
+    assert_output_not_contains '--setenv FROM_OPTION option'
+    assert_output_contains '--setenv EXPLICIT value'
+}
+
+@test 'SKN_PASS_VARS rejects empty entries and assignments' {
+    run env -u SKN_PATH_CHECK SKN_PASS_VARS=FOO: "$SKN" true +S
+    assert_status 2
+    assert_output_contains 'SKN_PASS_VARS'
+    assert_output_contains 'empty'
+
+    run env -u SKN_PATH_CHECK SKN_PASS_VARS=FOO=bar "$SKN" true +S
+    assert_status 2
+    assert_output_contains 'SKN_PASS_VARS'
+    assert_output_contains 'variable names'
 }
 
 @test '+S preserves user bind ordering' {

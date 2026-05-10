@@ -69,11 +69,50 @@ load 'helpers/common'
     run env SECRET=host SKN_PATH_CHECK=true "$SKN" bash -- -c 'test -z "${SECRET+x}"'
     assert_success
 
-    run env SECRET=host SKN_PATH_CHECK=true "$SKN" bash +E SECRET=explicit -- -c '[[ ${SECRET:-} == explicit ]]'
+    run env SECRET=host SKN_PATH_CHECK=true "$SKN" bash +V SECRET=explicit -- -c '[[ ${SECRET:-} == explicit ]]'
     assert_success
 
-    run env SECRET=host SKN_PATH_CHECK=true "$SKN" bash +P -- -c '[[ ${SECRET:-} == host ]]'
+    run env SECRET=host SKN_PATH_CHECK=true "$SKN" bash +V SECRET -- -c '[[ ${SECRET:-} == host ]]'
     assert_success
+
+    run env SECRET=host SKN_PATH_CHECK=true "$SKN" bash +V SECRET=explicit +V SECRET -- -c '[[ ${SECRET:-} == host ]]'
+    assert_success
+
+    run env -u SECRET SKN_PATH_CHECK=true "$SKN" bash +V SECRET=explicit +V SECRET -- -c 'test -z "${SECRET+x}"'
+    assert_success
+
+    run env -u OPTIONAL SKN_PATH_CHECK=true "$SKN" bash +V OPTIONAL -- -c 'test -z "${OPTIONAL+x}"'
+    assert_success
+
+    run env path=host SKN_PATH_CHECK=true "$SKN" bash +V path +R . -- -c '[[ ${path:-} == host ]]'
+    assert_success
+
+    run env SECRET=host SKN_PASS_VARS=SECRET:ABSENT SKN_PATH_CHECK=true "$SKN" bash -- -c '
+        [[ ${SECRET:-} == host ]]
+        test -z "${ABSENT+x}"
+    '
+    assert_success
+
+    run env SECRET=host SKN_PATH_CHECK=true "$SKN" bash +E -- -c '[[ ${SECRET:-} == host ]]'
+    assert_success
+
+    run env SECRET=host SKN_PATH_CHECK=true "$SKN" bash +E +V SECRET=explicit +V SECRET -- -c '[[ ${SECRET:-} == host ]]'
+    assert_success
+
+    run env path=host SKN_PATH_CHECK=true "$SKN" bash +E +R . -- -c '[[ ${path:-} == host ]]'
+    assert_success
+}
+
+@test '+E and +V preserve original values for Bash special variables' {
+    require_working_skn
+
+    run env BASH_VERSION=caller SKN_PATH_CHECK=true "$SKN" /usr/bin/env +E
+    assert_success
+    assert_output_contains 'BASH_VERSION=caller'
+
+    run env BASH_VERSION=caller SKN_PATH_CHECK=true "$SKN" /usr/bin/env +V BASH_VERSION
+    assert_success
+    assert_output_contains 'BASH_VERSION=caller'
 }
 
 @test 'nested skn inherits path-check bypass and read-only bind baseline' {

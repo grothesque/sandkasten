@@ -48,7 +48,7 @@ and the no-subcommand default, are refused because they may execute build script
 proc macros, tests, or other project code with network access.
 
 For compatibility with toolchains and project-specific Cargo configuration,
-the Rust wrappers pass `+P` to `skn` and therefore preserve the caller environment by default.
+the Rust wrappers pass `+E` to `skn` and therefore preserve the caller environment by default.
 Be aware that untrusted build scripts, proc macros, tests,
 and related subprocesses may be able to read environment variables containing secrets.
 They also bind Cargo home writable when it exists, which may expose Cargo credentials or allow persistent changes to Cargo configuration/cache state.
