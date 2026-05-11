@@ -85,9 +85,10 @@ skn-cargo +S build
 
 When `skn-cargo` detects a Cargo workspace, it binds that workspace writable.
 Cargo’s top-level `-C DIR` option is honored for this workspace detection.
-Outside a detected workspace, it does not implicitly bind the current directory,
-so commands such as `cargo new foo` fail unless you explicitly grant writable access,
-for example with `skn-cargo +W. new foo`.
+Outside a detected workspace, it does not implicitly bind the current directory for general commands.
+For Cargo project creation commands, it grants only the location needed for the new package:
+`cargo new PATH` binds the parent directory writable, and `cargo init [PATH]` binds the target directory when it already exists or the parent otherwise.
+These automatic grants are still checked by `skn` like explicit `+W` options.
 
 Use `+T` when a directory should appear writable but host changes should be discarded.
 For example, `skn-cargo +T ~/.cargo build` lets Cargo and subprocesses write to a transient Cargo home overlay for that run,

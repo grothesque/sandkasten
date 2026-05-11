@@ -102,8 +102,89 @@ parse_skn_info() {
     cargo_argv=("${skn_command_argv[@]:1}")
 }
 
+word_in() { [[ $2 == *" $1 "* ]]; }
+
+has_attached_value() {
+    local arg=$1 opts=$2 opt
+    for opt in $opts; do [[ $arg == "$opt="* ]] && return 0; done
+    return 1
+}
+
+set_parsed_positional() {
+    parsed_arg=$1; parsed_found=1; shift; parsed_tail=("$@")
+}
+
+parse_cargo_positionals() {
+    local scope=$1 arg
+    local flags=' --locked --offline --frozen -q --quiet --verbose -v -vv -vvv -vvvv -vvvvv '
+    local value_opts=' --color --config '
+    shift; parsed_arg=; parsed_tail=(); parsed_found=0
+
+    if [[ $scope == top ]]; then
+        flags+=' -V --version --list -h --help '
+        value_opts+=' --explain '
+    else
+        flags+=' --bin --lib '
+        value_opts+=' --vcs --edition --name --registry '
+    fi
+
+    while (($#)); do
+        arg=$1
+        case $arg in
+            --)
+                shift
+                (($#)) && set_parsed_positional "$@"
+                return 0
+                ;;
+            -Zscript*)
+                [[ $scope == top ]] && return 1
+                ;;
+            -C)
+                [[ $scope == top ]] || return 1
+                (($# >= 2)) || return 1
+                cargo_cwd=$2
+                cargo_has_cwd=1
+                shift 2
+                continue
+                ;;
+            -C?*)
+                [[ $scope == top ]] || return 1
+                cargo_cwd=${arg:2}
+                cargo_has_cwd=1
+                shift
+                continue
+                ;;
+            -h|--help)
+                [[ $scope == creation ]] && return 1
+                ;;
+            -Z)
+                (($# >= 2)) || return 1
+                [[ $scope == top && $2 == script* ]] && return 1
+                shift 2
+                continue
+                ;;
+        esac
+
+        if [[ $arg == -Z?* ]] ||
+            word_in "$arg" "$flags" ||
+            has_attached_value "$arg" "$value_opts"; then
+            shift
+        elif word_in "$arg" "$value_opts"; then
+            (($# >= 2)) || return 1
+            shift 2
+        elif [[ $arg == -* ]]; then
+            return 1
+        else
+            set_parsed_positional "$@"
+            return 0
+        fi
+    done
+}
+
 analyze_cargo_args() {
     cargo_subcommand=
+    cargo_subcommand_args=()
+    cargo_creation_bind=
     cargo_cwd=
     cargo_has_cwd=0
 
@@ -112,42 +193,52 @@ analyze_cargo_args() {
         shift
     fi
 
-    while (($#)); do
-        case $1 in
-            --) return 0 ;;
-            -Zscript*) return 1 ;;
-            -Z)
-                (($# >= 2)) || return 1
-                [[ $2 == script* ]] && return 1
-                shift 2
-                ;;
-            -C)
-                (($# >= 2)) || return 1
-                cargo_cwd=$2
-                cargo_has_cwd=1
-                shift 2
-                ;;
-            -C?*)
-                cargo_cwd=${1:2}
-                cargo_has_cwd=1
-                shift
-                ;;
-            -V|--version|--list|--locked|--offline|--frozen|-h|--help|-q|--quiet|--verbose|-v|-vv|-vvv|-vvvv|-vvvvv)
-                shift
-                ;;
-            --color=*|--config=*|--explain=*|-Z?*)
-                shift
-                ;;
-            --color|--config|--explain)
-                (($# >= 2)) || return 1
-                shift 2
-                ;;
-            -*) return 1 ;;
-            *) cargo_subcommand=$1; return 0 ;;
-        esac
-    done
+    parse_cargo_positionals top "$@" || return 1
+    if ((parsed_found)); then
+        cargo_subcommand=$parsed_arg
+        cargo_subcommand_args=("${parsed_tail[@]}")
+    fi
+}
 
-    return 0
+absolute_from_cargo_cwd() {
+    local path=$1 base=$PWD
+
+    if [[ $path == /* ]]; then
+        realpath -s -m -- "$path"
+        return
+    elif ((cargo_has_cwd)); then
+        [[ $cargo_cwd == /* ]] && base=$cargo_cwd || base=$PWD/$cargo_cwd
+    fi
+
+    realpath -s -m -- "$base/$path"
+}
+
+find_cargo_creation_bind() {
+    local target_path bind_path
+
+    case $cargo_subcommand in
+        new|init) ;;
+        *) return 1 ;;
+    esac
+
+    parse_cargo_positionals creation "${cargo_subcommand_args[@]}" || return 1
+
+    if [[ $cargo_subcommand == new ]]; then
+        ((parsed_found)) || return 1
+        target_path=$(absolute_from_cargo_cwd "$parsed_arg") || return 1
+        bind_path=$(dirname -- "$target_path") || return 1
+    else
+        if ((parsed_found)); then
+            target_path=$(absolute_from_cargo_cwd "$parsed_arg") || return 1
+        else
+            target_path=$(absolute_from_cargo_cwd .) || return 1
+        fi
+
+        [[ -d $target_path ]] && bind_path=$target_path || bind_path=$(dirname -- "$target_path") || return 1
+    fi
+
+    [[ $bind_path != / ]] || return 1
+    cargo_creation_bind=$bind_path
 }
 
 real_cargo=${SKN_REAL_CARGO:-cargo}
@@ -186,6 +277,10 @@ elif [[ $skn_network_state == enabled ]]; then
     exit 2
 else
     skn_args+=(+V CARGO_NET_OFFLINE=true)
+fi
+
+if find_cargo_creation_bind; then
+    skn_args+=(+W "$cargo_creation_bind")
 fi
 
 if locate_workspace_manifest "$cargo_cwd" "$cargo_has_cwd"; then

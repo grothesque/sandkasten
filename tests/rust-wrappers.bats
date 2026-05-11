@@ -161,6 +161,18 @@ assert_args_contain_pair() {
     return 1
 }
 
+run_skn_cargo_in() {
+    local cwd=$1
+    shift
+
+    run bash -c 'cd "$1" && shift && "$@"' _ "$cwd" "$SKN_CARGO" "$@"
+}
+
+read_final_args() {
+    args="$BATS_TEST_TMPDIR/$1.lines"
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+}
+
 @test 'skn-cargo adds offline mode and writable workspace when network is disabled' {
     workspace="$BATS_TEST_TMPDIR/workspace"
     mkdir -p "$workspace"
@@ -195,13 +207,12 @@ assert_args_contain_pair() {
     export FAKE_CARGO_LOCATE=success
     export FAKE_WORKSPACE_MANIFEST="$workspace/Cargo.toml"
 
-    run bash -c 'cd "$1" && "$2" -C ../workspace build' _ "$launch" "$SKN_CARGO"
+    run_skn_cargo_in "$launch" -C ../workspace build
     assert_success
 
     [[ $(<"$FAKE_CARGO_LOCATE_CWD") == "$workspace" ]]
 
-    args="$BATS_TEST_TMPDIR/final-c.lines"
-    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+    read_final_args final-c
     assert_args_contain_pair "$args" '+W' "$workspace"
     assert_args_contain_pair "$args" '+V' 'CARGO_NET_OFFLINE=true'
     assert_args_contain "$args" '-C'
@@ -218,17 +229,62 @@ assert_args_contain_pair() {
     export FAKE_CARGO_LOCATE=success
     export FAKE_WORKSPACE_MANIFEST="$workspace/Cargo.toml"
 
-    run bash -c 'cd "$1" && "$2" build -C ../workspace' _ "$launch" "$SKN_CARGO"
+    run_skn_cargo_in "$launch" build -C ../workspace
     assert_success
 
     [[ $(<"$FAKE_CARGO_LOCATE_CWD") == "$launch" ]]
 
-    args="$BATS_TEST_TMPDIR/final-c-after.lines"
-    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+    read_final_args final-c-after
     assert_args_contain_pair "$args" '+V' 'CARGO_NET_OFFLINE=true'
     assert_args_contain "$args" 'build'
     assert_args_contain "$args" '-C'
     assert_args_contain "$args" '../workspace'
+}
+
+@test 'skn-cargo binds cargo new parent directory writable outside workspaces' {
+    launch="$BATS_TEST_TMPDIR/new-launch"
+    mkdir -p "$launch"
+
+    run_skn_cargo_in "$launch" new foo
+    assert_success
+    read_final_args final-new
+    assert_args_contain_pair "$args" '+W' "$launch"
+}
+
+@test 'skn-cargo binds cargo new parent relative to top-level -C' {
+    parent="$BATS_TEST_TMPDIR/new-c-parent"
+    launch="$parent/launch"
+    cargo_dir="$parent/cargo-dir"
+    crates_dir="$cargo_dir/crates"
+    mkdir -p "$launch" "$crates_dir"
+
+    run_skn_cargo_in "$launch" -C ../cargo-dir new --lib --name foo crates/foo
+    assert_success
+    read_final_args final-new-c
+    assert_args_contain_pair "$args" '+W' "$crates_dir"
+}
+
+@test 'skn-cargo binds cargo init target directory or parent writable' {
+    launch="$BATS_TEST_TMPDIR/init-launch"
+    existing="$launch/existing"
+    mkdir -p "$existing"
+
+    run_skn_cargo_in "$launch" init existing
+    assert_success
+    read_final_args final-init-existing
+    assert_args_contain_pair "$args" '+W' "$existing"
+
+    rm -f "$FAKE_SKN_FINAL_ARGS"
+    run_skn_cargo_in "$launch" init missing
+    assert_success
+    read_final_args final-init-missing
+    assert_args_contain_pair "$args" '+W' "$launch"
+
+    rm -f "$FAKE_SKN_FINAL_ARGS"
+    run_skn_cargo_in "$launch" init --help
+    assert_success
+    read_final_args final-init-help
+    assert_args_not_contain "$args" '+W'
 }
 
 @test 'skn-cargo enables network automatically for a dependency-management subcommand' {
