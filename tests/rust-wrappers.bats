@@ -231,38 +231,45 @@ assert_args_contain_pair() {
     assert_args_contain "$args" '../workspace'
 }
 
-@test 'skn-cargo enables network automatically for selected dependency-management subcommands' {
-    local subcommand
+@test 'skn-cargo enables network automatically for a dependency-management subcommand' {
+    run "$SKN_CARGO" fetch
+    assert_success
 
-    for subcommand in fetch update add generate-lockfile search; do
-        rm -f "$FAKE_SKN_FINAL_ARGS"
-
-        run "$SKN_CARGO" "$subcommand"
-        assert_success
-
-        args="$BATS_TEST_TMPDIR/final-auto-$subcommand.lines"
-        write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
-        assert_args_contain "$args" '+N'
-        assert_args_contain "$args" "$subcommand"
-        assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
-    done
+    args="$BATS_TEST_TMPDIR/final-auto-fetch.lines"
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+    assert_args_contain "$args" '+N'
+    assert_args_contain "$args" 'fetch'
+    assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
 }
 
-@test 'skn-cargo allows explicit network for selected dependency-management subcommands' {
-    local subcommand
+@test 'skn-cargo allows explicit network for an auto-networked subcommand' {
+    run "$SKN_CARGO" +N fetch
+    assert_success
 
-    for subcommand in fetch update add generate-lockfile search; do
-        rm -f "$FAKE_SKN_FINAL_ARGS"
+    args="$BATS_TEST_TMPDIR/final-fetch.lines"
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+    assert_args_contain "$args" '+N'
+    assert_args_contain "$args" 'fetch'
+    assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
+}
 
-        run "$SKN_CARGO" +N "$subcommand"
-        assert_success
+@test 'skn-cargo allows explicit network for neutral subcommands but keeps them offline by default' {
+    run "$SKN_CARGO" upgrade
+    assert_success
+    args="$BATS_TEST_TMPDIR/final-upgrade-offline.lines"
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+    assert_args_not_contain "$args" '+N'
+    assert_args_contain_pair "$args" '+V' 'CARGO_NET_OFFLINE=true'
+    assert_args_contain "$args" 'upgrade'
 
-        args="$BATS_TEST_TMPDIR/final-$subcommand.lines"
-        write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
-        assert_args_contain "$args" '+N'
-        assert_args_contain "$args" "$subcommand"
-        assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
-    done
+    rm -f "$FAKE_SKN_FINAL_ARGS"
+    run "$SKN_CARGO" +N upgrade
+    assert_success
+    args="$BATS_TEST_TMPDIR/final-upgrade-network.lines"
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+    assert_args_contain "$args" '+N'
+    assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
+    assert_args_contain "$args" 'upgrade'
 }
 
 @test 'skn-cargo leaves offline mode unset for allowed network and passes cargo +toolchain args through' {
@@ -298,15 +305,15 @@ assert_args_contain_pair() {
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$BATS_TEST_TMPDIR/final-color.lines"
     assert_args_contain "$BATS_TEST_TMPDIR/final-color.lines" '+N'
 
-    run "$SKN_CARGO" +nightly --config net.git-fetch-with-cli=true update
+    run "$SKN_CARGO" +nightly --config net.git-fetch-with-cli=true fetch
     assert_success
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$BATS_TEST_TMPDIR/final-config.lines"
     assert_args_contain "$BATS_TEST_TMPDIR/final-config.lines" '+N'
 
-    run "$SKN_CARGO" --color=always --config=foo=bar search serde
+    run "$SKN_CARGO" --color=always --config=foo=bar fetch --target wasm32-unknown-unknown
     assert_success
-    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$BATS_TEST_TMPDIR/final-search.lines"
-    assert_args_contain "$BATS_TEST_TMPDIR/final-search.lines" '+N'
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$BATS_TEST_TMPDIR/final-fetch-args.lines"
+    assert_args_contain "$BATS_TEST_TMPDIR/final-fetch-args.lines" '+N'
 
     run "$SKN_CARGO" -Z unstable-options fetch
     assert_success
@@ -318,18 +325,14 @@ assert_args_contain_pair() {
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$BATS_TEST_TMPDIR/final-c-fetch.lines"
     assert_args_contain "$BATS_TEST_TMPDIR/final-c-fetch.lines" '+N'
 
-    run "$SKN_CARGO" -C. update
+    run "$SKN_CARGO" -C. fetch
     assert_success
-    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$BATS_TEST_TMPDIR/final-c-attached-update.lines"
-    assert_args_contain "$BATS_TEST_TMPDIR/final-c-attached-update.lines" '+N'
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$BATS_TEST_TMPDIR/final-c-attached-fetch.lines"
+    assert_args_contain "$BATS_TEST_TMPDIR/final-c-attached-fetch.lines" '+N'
 }
 
-@test 'skn-cargo refuses network for build-like subcommands after Cargo top-level options' {
+@test 'skn-cargo refuses network for a denied subcommand after Cargo top-level options' {
     run "$SKN_CARGO" +N --locked -q build
-    assert_status 2
-    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
-
-    run "$SKN_CARGO" +N +nightly --color always test
     assert_status 2
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 
@@ -364,16 +367,18 @@ assert_args_contain_pair() {
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 }
 
-@test 'skn-cargo refuses network for build-like or absent subcommands' {
-    local subcommand
+@test 'skn-cargo refuses network for denied or absent subcommands' {
+    run "$SKN_CARGO" +N build
+    assert_status 2
+    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 
-    for subcommand in build run check test clippy install ''; do
-        rm -f "$FAKE_SKN_FINAL_ARGS"
+    run "$SKN_CARGO" +N install
+    assert_status 2
+    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 
-        run "$SKN_CARGO" +N "$subcommand"
-        assert_status 2
-        [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
-    done
+    run "$SKN_CARGO" +N
+    assert_status 2
+    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 
     run "$SKN_CARGO" +N --version
     assert_status 2

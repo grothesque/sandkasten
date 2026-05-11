@@ -37,14 +37,15 @@ Then build offline:
 skn-cargo build
 ```
 
-`skn-cargo` enables network access automatically for the dependency-management subcommands listed in the `network_cargo_subcommands` variable near the top of `rust/skn-cargo`.
-By default, this is `fetch`, `update`, `add`, `generate-lockfile`,
-and `search`, because these commands are not expected to execute project code.
-For other subcommands, including `build`, `check`, `test`,
-`run`, `doc`, `install`, custom subcommands other than configured exceptions,
-and the no-subcommand default, `skn-cargo` sets `CARGO_NET_OFFLINE=true` inside the sandbox.
-Explicit `+N` is accepted for the dependency-management commands and refused for the other subcommands because they may execute build scripts,
-proc macros, tests, or other project code with network access.
+`skn-cargo` enables network access automatically for known dependency-management subcommands,
+such as `fetch`, because these commands are not expected to execute project code.
+It refuses explicit `+N` for known build-like or code-executing subcommands,
+such as `build`, because they may execute build scripts, proc macros,
+tests, or other project code with network access.
+Other identifiable subcommands, including custom subcommands such as `cargo-upgrade`,
+run offline by default with `CARGO_NET_OFFLINE=true`, but may use explicit `+N`.
+The exact policy lists live in `net_auto_subcommands` and `net_deny_subcommands` near the top of `rust/skn-cargo`.
+The no-subcommand default and invocations whose subcommand cannot be safely identified also run offline by default and refuse explicit `+N`.
 Cargo arguments are otherwise passed through unchanged, except that leading arguments in `skn`’s current or reserved uppercase `+` option namespace must be passed after `--`.
 
 For compatibility with toolchains and project-specific Cargo configuration,
@@ -58,18 +59,17 @@ If you need Cargo registry credentials, prefer configuring Cargo to retrieve tok
 For example, Cargo supports `registry.global-credential-providers`,
 which can invoke a password manager or other helper to supply tokens when needed.
 
-For dependency-management commands, network access is enabled and the wrapper does not set `CARGO_NET_OFFLINE`:
+For auto-networked dependency-management commands, network access is enabled and the wrapper does not set `CARGO_NET_OFFLINE`:
 
 ```sh
-skn-cargo update
-skn-cargo add serde
-skn-cargo search serde
+skn-cargo fetch
 ```
 
 Because the wrappers preserve the caller environment, an already-inherited `CARGO_NET_OFFLINE` value still applies even when `skn-cargo` enables network access.
-If you intentionally need a different networked Cargo operation,
-bypass this policy explicitly by invoking `skn` with the real Cargo command,
-for example `skn "$SKN_REAL_CARGO" +N ...` in strict PATH setups.
+If you intentionally need network for a subcommand that is on neither policy list,
+pass `+N` explicitly, for example `skn-cargo +N upgrade`.
+If you intentionally need to bypass the policy for a denied Cargo operation,
+invoke `skn` with the real Cargo command, for example `skn "$SKN_REAL_CARGO" +N ...` in strict PATH setups.
 
 `cargo install` is intentionally not allowed with `+N`, because it downloads and builds code in one step.
 When source is available, use a two-stage local-source workflow instead:

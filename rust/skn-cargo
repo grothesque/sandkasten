@@ -3,8 +3,9 @@
 # Run cargo under skn with defaults suitable for building untrusted projects.
 #
 # This wrapper intentionally stays small and delegates skn option parsing to
-# skn itself. Commands in network_cargo_subcommands get network automatically;
-# other Cargo invocations run offline, and explicit +N is refused for them.
+# skn itself. Commands in net_auto_subcommands get network automatically.
+# Commands in net_deny_subcommands are never allowed network access.
+# Other identifiable subcommands run offline by default, but may use explicit +N.
 #
 # Examples:
 #   skn-cargo fetch
@@ -17,9 +18,12 @@ set -euo pipefail
 # would become too confusing.
 progname=skn-cargo
 
-# Space-padded list. Do not add commands that can execute project code, such as
-# build, check, test, run, doc, install, or most custom commands.
-network_cargo_subcommands=' fetch update add generate-lockfile search '
+# Space-padded lists.
+# Auto-enable network only for commands expected to need it without building or
+# executing project code. Refuse network for commands that can build or execute
+# code, even when requested explicitly.
+net_auto_subcommands=' fetch update add generate-lockfile search '
+net_deny_subcommands=' bench build check clippy doc fix install miri package publish run rustc rustdoc test '
 
 if [[ ${SKN_CARGO_WRAPPER_ACTIVE:-} == 1 ]]; then
     echo "$progname: recursive Cargo wrapper invocation; set SKN_REAL_CARGO to the real Cargo command" >&2
@@ -152,12 +156,15 @@ if ! parse_skn_info <<<"$skn_info_output"; then
 fi
 
 if analyze_cargo_args "${cargo_argv[@]}"; then
-    if [[ $network_cargo_subcommands == *" $cargo_subcommand "* ]]; then
+    if [[ $net_auto_subcommands == *" $cargo_subcommand "* ]]; then
         [[ $skn_network_state == disabled ]] && skn_args+=(+N)
-    elif [[ $skn_network_state == enabled ]]; then
-        echo "$progname: refusing +N: network is not allowed for this Cargo invocation" >&2
-        exit 2
-    else
+    elif [[ -z $cargo_subcommand || $net_deny_subcommands == *" $cargo_subcommand "* ]]; then
+        if [[ $skn_network_state == enabled ]]; then
+            echo "$progname: refusing +N: network is not allowed for this Cargo invocation" >&2
+            exit 2
+        fi
+        skn_args+=(+V CARGO_NET_OFFLINE=true)
+    elif [[ $skn_network_state == disabled ]]; then
         skn_args+=(+V CARGO_NET_OFFLINE=true)
     fi
 elif [[ $skn_network_state == enabled ]]; then
