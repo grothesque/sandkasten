@@ -163,8 +163,8 @@ PATH="$HOME/bin/skn-strict:$PATH" editor
 ```
 
 Strict PATH mode requires these explicit real-tool settings.
-The wrappers use simple recursion guards to turn symlink or launcher-script loops into clear errors instead of hangs.
-For example, `cargo -> skn-cargo` and `cargo` scripts that run `exec skn-cargo "$@"` are rejected once they re-enter the wrapper.
+`skn-cargo` uses a bounded recursion-depth guard to let ordinary recursive Cargo calls from custom subcommands work while still turning wrapper loops into clear errors instead of hangs.
+The limit is configurable for unusual workflows.
 
 `skn-cargo` runs `${SKN_REAL_CARGO:-cargo}`.
 If `SKN_REAL_CARGO` is set, it also sets `CARGO` to that value inside the sandbox;

@@ -410,6 +410,38 @@ assert_args_contain_pair() {
     assert_args_not_contain_env "$args" PATH
 }
 
+@test 'skn-cargo recursion depth guard allows the last permitted level and rejects the next one' {
+    export SKN_REAL_CARGO="$REAL_FAKE_CARGO"
+
+    run env SKN_CARGO_WRAPPER_DEPTH=4 "$SKN_CARGO" build
+    assert_success
+
+    args="$BATS_TEST_TMPDIR/final-depth-ok.lines"
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+    assert_args_contain "$args" "$REAL_FAKE_CARGO"
+
+    rm -f "$FAKE_SKN_INFO_ARGS" "$FAKE_SKN_FINAL_ARGS"
+
+    run env SKN_CARGO_WRAPPER_DEPTH=5 "$SKN_CARGO" build
+    assert_status 2
+    assert_output_contains 'recursive Cargo wrapper invocation'
+    assert_output_contains 'depth exceeded'
+    [[ ! -e $FAKE_SKN_INFO_ARGS ]]
+    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+}
+
+@test 'skn-cargo recursive strict PATH loops stop at the configured depth' {
+    rm -f "$fake_bin/cargo"
+    ln -s "$SKN_CARGO" "$fake_bin/cargo"
+
+    run env SKN_CARGO_WRAPPER_MAX_DEPTH=2 "$fake_bin/cargo" build
+    assert_status 2
+    assert_output_contains 'recursive Cargo wrapper invocation'
+    assert_output_contains 'depth exceeded'
+    [[ -e $FAKE_SKN_INFO_ARGS ]]
+    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+}
+
 @test 'skn-cargo fails when strict PATH symlinks cargo to the wrapper' {
     rm -f "$fake_bin/cargo"
     ln -s "$SKN_CARGO" "$fake_bin/cargo"

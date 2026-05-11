@@ -25,11 +25,25 @@ progname=skn-cargo
 net_auto_subcommands=' fetch update add generate-lockfile search '
 net_deny_subcommands=' bench build check clippy doc fix install miri package publish run rustc rustdoc test '
 
-if [[ ${SKN_CARGO_WRAPPER_ACTIVE:-} == 1 ]]; then
-    echo "$progname: recursive Cargo wrapper invocation; set SKN_REAL_CARGO to the real Cargo command" >&2
+cargo_wrapper_max_depth=${SKN_CARGO_WRAPPER_MAX_DEPTH:-5}
+cargo_wrapper_depth=${SKN_CARGO_WRAPPER_DEPTH:-0}
+
+if [[ ! $cargo_wrapper_max_depth =~ ^[1-9][0-9]*$ ]]; then
+    echo "$progname: invalid SKN_CARGO_WRAPPER_MAX_DEPTH: $cargo_wrapper_max_depth" >&2
     exit 2
 fi
-export SKN_CARGO_WRAPPER_ACTIVE=1
+
+if [[ ! $cargo_wrapper_depth =~ ^[0-9]+$ ]]; then
+    echo "$progname: invalid SKN_CARGO_WRAPPER_DEPTH: $cargo_wrapper_depth" >&2
+    exit 2
+fi
+
+if ((10#$cargo_wrapper_depth >= 10#$cargo_wrapper_max_depth)); then
+    echo "$progname: recursive Cargo wrapper invocation depth exceeded" >&2
+    exit 2
+fi
+
+export SKN_CARGO_WRAPPER_DEPTH=$((10#$cargo_wrapper_depth + 1))
 
 locate_workspace_manifest() {
     local cargo_cwd=$1

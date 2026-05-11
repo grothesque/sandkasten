@@ -83,7 +83,9 @@ real_rust_analyzer=${SKN_REAL_RUST_ANALYZER:-rust-analyzer}
 real_cargo=${SKN_REAL_CARGO:-cargo}
 
 if [[ -z ${SKN_REAL_CARGO:-} ]]; then
-    export SKN_CARGO_WRAPPER_ACTIVE=1
+    # If Cargo resolves to skn-cargo while locating the workspace, force its
+    # recursion-depth guard to fail immediately with a clear diagnostic.
+    export SKN_CARGO_WRAPPER_DEPTH=${SKN_CARGO_WRAPPER_MAX_DEPTH:-5}
 fi
 
 skn_args=(
