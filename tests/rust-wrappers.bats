@@ -428,10 +428,37 @@ read_final_args() {
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 }
 
+@test 'skn-cargo gives clearer errors for registry or Git cargo install' {
+    local words
+    local -a argv
+
+    for words in 'install cargo-edit' 'install --git=https://example.invalid/repo.git' '+N install cargo-edit'; do
+        read -r -a argv <<<"$words"
+        run "$SKN_CARGO" "${argv[@]}"
+        assert_status 2
+        assert_output_contains 'cargo install downloads and builds in one step'
+        [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+    done
+}
+
+@test 'skn-cargo still permits clearly local or offline cargo install forms' {
+    local words install_args="$BATS_TEST_TMPDIR/final-install.lines"
+    local -a argv
+
+    for words in 'install --list' 'install --path . --locked' 'install --offline cargo-edit'; do
+        rm -f "$FAKE_SKN_FINAL_ARGS"
+        read -r -a argv <<<"$words"
+        run "$SKN_CARGO" "${argv[@]}"
+        assert_success
+        write_args_lines "$FAKE_SKN_FINAL_ARGS" "$install_args"
+        assert_args_contain_pair "$install_args" '+V' 'CARGO_NET_OFFLINE=true'
+    done
+}
+
 @test 'skn-cargo refuses network for denied aliases, denied subcommands, or absent subcommands' {
     local subcommand
 
-    for subcommand in b c d r t build install; do
+    for subcommand in b c d r t build; do
         run "$SKN_CARGO" +N "$subcommand"
         assert_status 2
         [[ ! -e $FAKE_SKN_FINAL_ARGS ]]

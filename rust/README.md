@@ -71,11 +71,19 @@ pass `+N` explicitly, for example `skn-cargo +N upgrade`.
 If you intentionally need to bypass the policy for a denied Cargo operation,
 invoke `skn` with the real Cargo command, for example `skn "$SKN_REAL_CARGO" +N ...` in strict PATH setups.
 
-`cargo install` is intentionally not allowed with `+N`, because it downloads and builds code in one step.
-When source is available, use a two-stage local-source workflow instead:
-fetch or update dependencies with network access, then install from the local path offline,
-for example `skn-cargo fetch --locked` followed by `skn-cargo install --path . --locked`.
-For crates already present in Cargo’s cache, `skn-cargo install --offline --locked CRATE` may also work.
+`cargo install` is intentionally not allowed with `+N`, because the usual registry or Git install path downloads and builds code in one step.
+For ordinary `cargo install CRATE` use, run the real Cargo command from inside an explicitly networked sandboxed shell instead:
+
+```sh
+skn bash +N +E +W "${CARGO_HOME:-$HOME/.cargo}" +R "${RUSTUP_HOME:-$HOME/.rustup}"
+# inside the sandbox:
+/usr/bin/cargo install cargo-edit --locked
+```
+
+Replace `/usr/bin/cargo` with the actual non-wrapper Cargo path on your system,
+for example the value of `SKN_REAL_CARGO` in strict PATH setups.
+This workflow deliberately gives build-time code network access,
+so it is less restrictive than normal `skn-cargo` builds, but filesystem access is still limited to the paths explicitly bound into the shell.
 
 Use `+S` to show the generated sandbox command without running Cargo:
 

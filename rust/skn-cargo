@@ -120,13 +120,19 @@ parse_cargo_positionals() {
     local value_opts=' --color --config '
     shift; parsed_arg=; parsed_tail=(); parsed_found=0
 
-    if [[ $scope == top ]]; then
-        flags+=' -V --version --list -h --help '
-        value_opts+=' --explain '
-    else
-        flags+=' --bin --lib '
-        value_opts+=' --vcs --edition --name --registry '
-    fi
+    case $scope in
+        top)
+            flags+=' -V --version --list -h --help '
+            value_opts+=' --explain '
+            ;;
+        creation)
+            flags+=' --bin --lib '
+            value_opts+=' --vcs --edition --name --registry '
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 
     while (($#)); do
         arg=$1
@@ -241,6 +247,22 @@ find_cargo_creation_bind() {
     cargo_creation_bind=$bind_path
 }
 
+cargo_install_likely_needs_network() {
+    local arg likely=0
+
+    for arg; do
+        case $arg in
+            -h|--help|--list|--offline|--frozen|--path|--path=*) return 1 ;;
+            --git=*|--index=*|--registry=*) likely=1 ;;
+            --*) ;;
+            -*) ;;
+            *) likely=1 ;;
+        esac
+    done
+
+    ((likely))
+}
+
 real_cargo=${SKN_REAL_CARGO:-cargo}
 
 skn_args=(
@@ -261,6 +283,15 @@ if ! parse_skn_info <<<"$skn_info_output"; then
 fi
 
 if analyze_cargo_args "${cargo_argv[@]}"; then
+    if [[ $cargo_subcommand == install ]]; then
+        if [[ $skn_network_state == enabled ]] ||
+            cargo_install_likely_needs_network "${cargo_subcommand_args[@]}"; then
+            echo "$progname: cargo install downloads and builds in one step" >&2
+            echo "$progname: run real Cargo in a networked skn shell instead" >&2
+            exit 2
+        fi
+    fi
+
     if [[ $net_auto_subcommands == *" $cargo_subcommand "* ]]; then
         [[ $skn_network_state == disabled ]] && skn_args+=(+N)
     elif [[ -z $cargo_subcommand || $net_deny_subcommands == *" $cargo_subcommand "* ]]; then
