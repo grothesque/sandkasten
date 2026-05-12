@@ -287,15 +287,20 @@ read_final_args() {
     assert_args_not_contain "$args" '+W'
 }
 
-@test 'skn-cargo enables network automatically for a dependency-management subcommand' {
-    run "$SKN_CARGO" fetch
-    assert_success
+@test 'skn-cargo enables network automatically for safe registry and dependency subcommands' {
+    local subcommand args
 
-    args="$BATS_TEST_TMPDIR/final-auto-fetch.lines"
-    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
-    assert_args_contain "$args" '+N'
-    assert_args_contain "$args" 'fetch'
-    assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
+    for subcommand in fetch info metadata tree vendor; do
+        rm -f "$FAKE_SKN_FINAL_ARGS"
+        run "$SKN_CARGO" "$subcommand"
+        assert_success
+
+        args="$BATS_TEST_TMPDIR/final-auto-$subcommand.lines"
+        write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+        assert_args_contain "$args" '+N'
+        assert_args_contain "$args" "$subcommand"
+        assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
+    done
 }
 
 @test 'skn-cargo allows explicit network for an auto-networked subcommand' {
@@ -423,14 +428,14 @@ read_final_args() {
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 }
 
-@test 'skn-cargo refuses network for denied or absent subcommands' {
-    run "$SKN_CARGO" +N build
-    assert_status 2
-    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+@test 'skn-cargo refuses network for denied aliases, denied subcommands, or absent subcommands' {
+    local subcommand
 
-    run "$SKN_CARGO" +N install
-    assert_status 2
-    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+    for subcommand in b c d r t build install; do
+        run "$SKN_CARGO" +N "$subcommand"
+        assert_status 2
+        [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+    done
 
     run "$SKN_CARGO" +N
     assert_status 2

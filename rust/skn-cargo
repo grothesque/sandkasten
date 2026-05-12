@@ -22,8 +22,8 @@ progname=skn-cargo
 # Auto-enable network only for commands expected to need it without building or
 # executing project code. Refuse network for commands that can build or execute
 # code, even when requested explicitly.
-net_auto_subcommands=' fetch update add generate-lockfile search '
-net_deny_subcommands=' bench build check clippy doc fix install miri package publish run rustc rustdoc test '
+net_auto_subcommands=' add fetch generate-lockfile info metadata search tree update vendor '
+net_deny_subcommands=' b bench build c check clippy d doc fix install miri package publish r run rustc rustdoc t test '
 
 cargo_wrapper_max_depth=${SKN_CARGO_WRAPPER_MAX_DEPTH:-5}
 cargo_wrapper_depth=${SKN_CARGO_WRAPPER_DEPTH:-0}
