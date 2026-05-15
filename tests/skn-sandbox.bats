@@ -170,6 +170,13 @@ load 'helpers/common'
     assert_output_contains 'directory'
 }
 
+@test 'sandbox hostname is neutralized' {
+    require_working_skn
+
+    run env SKN_PATH_CHECK=true "$SKN" bash -- -c '[[ $(cat /proc/sys/kernel/hostname) == skn ]]'
+    assert_success
+}
+
 @test 'synthetic sandbox root is read-only after setup' {
     require_working_skn
 

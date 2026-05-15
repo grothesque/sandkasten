@@ -9,8 +9,8 @@ usage() {
 Usage: $progname COMMAND [skn-options] [--] [COMMAND-args...]
 
 Run COMMAND inside a bwrap sandbox intended for untrusted code. The sandbox
-has a private /tmp, a mostly cleared environment unless +E is used, and no
-network access unless enabled with +N.
+has a private /tmp, a neutral hostname, a mostly cleared environment unless
++E is used, and no network access unless enabled with +N.
 
 The skn command line interface is unusual: the command to be sandboxed comes
 first, followed by skn's own + options and then the command's arguments. This
@@ -333,6 +333,7 @@ add_base_bwrap_setup() {
     local path
 
     add_bwrap_args --unshare-all
+    add_bwrap_args --hostname skn
     add_bwrap_args --new-session
     add_bwrap_args --die-with-parent
 

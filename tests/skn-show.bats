@@ -28,12 +28,14 @@ load 'helpers/common'
     assert_output_contains '--share-net'
 }
 
-@test '+S shows default optional system binds without requiring paths to exist' {
+@test '+S shows default namespace and optional system bind setup' {
     local path
 
     run env -u SKN_PATH_CHECK "$SKN" true +S
 
     assert_success
+    assert_output_contains '--unshare-all'
+    assert_output_contains '--hostname skn'
     assert_output_contains '--ro-bind /usr /usr'
 
     for path in /bin /sbin /etc/alternatives /etc/manpath.config /etc/man_db.conf /etc/man.conf; do

@@ -47,6 +47,7 @@ By default, the sandbox has
 
 - no network access,
 - a private `/tmp`,
+- a neutral hostname (`skn`),
 - a mostly cleared environment,
 - only minimal read-only access to host system/runtime files,
 - no access to the rest of the host filesystem unless explicitly configured.
@@ -406,6 +407,7 @@ Within that model, `skn` starts from a small, mostly read-only view of the host 
 In broad strokes:
 
 - System/runtime files are bound read-only.
+- The sandbox has its own UTS namespace and a neutral hostname (`skn`).
 - A small amount of system configuration is bound read-only when useful.
 - User/project files are not visible unless explicitly bound with `+R`, `+W`, `+T`,
   or trusted configuration such as `SKN_RO_BINDS`.
