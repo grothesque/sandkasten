@@ -1,198 +1,195 @@
-# skn Rust wrappers
+# Sandboxed wrappers for Cargo and rust-analyzer
 
-This directory contains Rust tool integrations for [`skn`](../README.md):
+Cargo dependencies can include build scripts and procedural macros.
+Cargo and rust-analyzer assume that all of this build-time code is trusted.
+Realistically, this is not always the case.
 
-- `skn-cargo` runs Cargo in the sandbox.
-- `skn-rust-analyzer` runs rust-analyzer in the sandbox.
+[rust-analyzer is particularly risky](https://rust-analyzer.github.io/book/security.html)
+because it runs `cargo` autonomously in the background:
+merely opening a workspace in an editor can end up executing
+build-time code from the workspace or its dependencies.
 
-The wrappers are meant to make a common workflow convenient:
-fetch dependencies with network access, then build, test, and analyze offline.
+The scripts in this directory reduce that exposure while keeping common Rust workflows usable.
+They behave roughly like `cargo` and `rust-analyzer`,
+except that they run under [Sandkasten (`skn`)](../README.md)
+and add suitable `skn` options automatically
+based on the command line and the directory from which they are run:
 
-## Requirements
+- `skn-cargo` runs Cargo in a mostly automatic sandbox,
+  with network access subject to command-specific restrictions.
+- `skn-rust-analyzer` runs rust-analyzer in a sandbox,
+  with network access disabled.
 
-- [`skn`](../README.md)
-- Cargo
-- rust-analyzer, for `skn-rust-analyzer`
+The wrappers apply two complementary policies automatically:
 
-Except in `+S` show mode or `+I` info mode, these wrappers inherit `skn`’s requirement that `SKN_PATH_CHECK` be set;
-see [`skn` path checks](../README.md#path-checks).
+- **Minimize filesystem exposure.**
+  They grant each command access only to the workspace and tool state it needs.
+- **Separate network access from code execution.**
+  Commands whose purpose is dependency resolution or retrieval may get network access;
+  commands that are known to execute project or dependency code are forced offline.
 
-## Fetch with network, build offline
+## Typical workflow
 
-Use `skn-cargo` directly or through a shell alias:
-
-```sh
-alias cargo=skn-cargo
-```
-
-Fetch dependencies with network access:
-
+Fetch dependencies first:
 ```sh
 skn-cargo fetch
 ```
 
-Then build offline:
-
+Then build, test, and run offline:
 ```sh
 skn-cargo build
+skn-cargo test
+skn-cargo run
 ```
 
-`skn-cargo` enables network access automatically for known dependency-management subcommands,
-such as `fetch`, because these commands are not expected to execute project code.
-It refuses explicit `+N` for known build-like or code-executing subcommands,
-such as `build`, because they may execute build scripts, proc macros,
-tests, or other project code with network access.
-Other identifiable subcommands, including custom subcommands such as `cargo-upgrade`,
-run offline by default with `CARGO_NET_OFFLINE=true`, but may use explicit `+N`.
-The exact policy lists live in `net_auto_subcommands` and `net_deny_subcommands` near the top of `rust/skn-cargo`.
-The no-subcommand default and invocations whose subcommand cannot be safely identified also run offline by default and refuse explicit `+N`.
-Cargo arguments are otherwise passed through unchanged, except that leading arguments in `skn`’s current or reserved uppercase `+` option namespace must be passed after `--`.
-
-For compatibility with toolchains and project-specific Cargo configuration,
-the Rust wrappers pass `+E` to `skn` and therefore preserve the caller environment by default.
-Be aware that untrusted build scripts, proc macros, tests,
-and related subprocesses may be able to read environment variables containing secrets.
-They also bind Cargo home writable when it exists, which may expose Cargo credentials or allow persistent changes to Cargo configuration/cache state.
-This bind, and the read-only rustup home bind when present,
-are passed as explicit `skn` options so they are visible with `+S` and checked by `skn`.
-If you need Cargo registry credentials, prefer configuring Cargo to retrieve tokens on demand from an external credential provider instead of storing tokens directly in Cargo home.
-For example, Cargo supports `registry.global-credential-providers`,
-which can invoke a password manager or other helper to supply tokens when needed.
-
-For auto-networked dependency-management commands, network access is enabled and the wrapper does not set `CARGO_NET_OFFLINE`:
-
+Additional `skn` grants can be passed before the wrapped tool arguments.
+For example:
 ```sh
-skn-cargo fetch
+skn-cargo +R ../local-dependency build
+skn-cargo +T. test
 ```
 
-Because the wrappers preserve the caller environment, an already-inherited `CARGO_NET_OFFLINE` value still applies even when `skn-cargo` enables network access.
-If you intentionally need network for a subcommand that is on neither policy list,
-pass `+N` explicitly, for example `skn-cargo +N upgrade`.
-If you intentionally need to bypass the policy for a denied Cargo operation,
-invoke `skn` with the real Cargo command, for example `skn "$SKN_REAL_CARGO" +N ...` in strict PATH setups.
-
-`cargo install` is intentionally not allowed with `+N`, because the usual registry or Git install path downloads and builds code in one step.
-For ordinary `cargo install CRATE` use, run the real Cargo command from inside an explicitly networked sandboxed shell instead:
-
+Trying to build with network access is refused:
 ```sh
-skn bash +N +E +W "${CARGO_HOME:-$HOME/.cargo}" +R "${RUSTUP_HOME:-$HOME/.rustup}"
-# inside the sandbox:
-/usr/bin/cargo install cargo-edit --locked
+skn-cargo +N build    # Aborts with an error message.
 ```
 
-Replace `/usr/bin/cargo` with the actual non-wrapper Cargo path on your system,
-for example the value of `SKN_REAL_CARGO` in strict PATH setups.
-This workflow deliberately gives build-time code network access,
-so it is less restrictive than normal `skn-cargo` builds, but filesystem access is still limited to the paths explicitly bound into the shell.
-
-Use `+S` to show the generated sandbox command without running Cargo:
-
+Use `+S` to inspect the resulting sandbox setup:
 ```sh
 skn-cargo +S build
-```
-
-When `skn-cargo` detects a Cargo workspace, it binds that workspace writable.
-Cargo’s top-level `-C DIR` option is honored for this workspace detection.
-Outside a detected workspace, it does not implicitly bind the current directory for general commands.
-For Cargo project creation commands, it grants only the location needed for the new package:
-`cargo new PATH` binds the parent directory writable, and `cargo init [PATH]` binds the target directory when it already exists or the parent otherwise.
-These automatic grants are still checked by `skn` like explicit `+W` options.
-
-Use `+T` when a directory should appear writable but host changes should be discarded.
-For example, `skn-cargo +T ~/.cargo build` lets Cargo and subprocesses write to a transient Cargo home overlay for that run,
-and `skn-cargo +T . test` lets tools write in the project tree without keeping their changes.
-`+T` still allows reads from the underlying directory, so it does not hide secrets.
-
-## rust-analyzer
-
-`skn-rust-analyzer` runs rust-analyzer itself inside the sandbox.
-Cargo, rustc, build scripts, proc macros, tests, and other subprocesses launched by rust-analyzer inherit that sandbox.
-
-This is preferable to trying to force every Cargo subprocess through a Cargo wrapper,
-because rust-analyzer uses several Cargo lookup modes depending on the operation and discovered toolchain.
-
-Typical use:
-
-```sh
-skn-rust-analyzer
-```
-
-Unlike `skn-cargo` dependency-management commands, `skn-rust-analyzer` disables network by default and sets `CARGO_NET_OFFLINE=true`.
-Like `skn` itself, it accepts `+N` syntactically, but then refuses it because rust-analyzer can execute project code through Cargo subprocesses.
-Fetch dependencies separately, then run rust-analyzer offline:
-
-```sh
-skn-cargo fetch
-skn-rust-analyzer
-```
-
-Use `+S` to show the generated sandbox command without starting rust-analyzer:
-
-```sh
 skn-rust-analyzer +S
 ```
 
-The detected Cargo workspace is bound writable because rust-analyzer and Cargo need to write target files and other workspace-local state.
-If no Cargo workspace is detected from the current directory,
-the current directory is bound read-only so rust-analyzer can still start with its usual no-workspace behavior without giving write access to an arbitrary launch directory.
-In both cases, the path is checked by `skn`.
+The general `skn` option syntax is documented in the [main README](../README.md).
 
-## Installing and using wrappers
+## Setup
 
-The least surprising setup is to install the wrappers under their own command names:
+### Requirements
 
-```text
-skn-cargo          # from rust/skn-cargo
-skn-rust-analyzer  # from rust/skn-rust-analyzer
+The wrappers require `skn` in `PATH`.
+`skn-cargo` needs Cargo.
+`skn-rust-analyzer` needs both Cargo and rust-analyzer.
+The corresponding real tools must be either in `PATH`
+or set explicitly using `SKN_REAL_CARGO` and `SKN_REAL_RUST_ANALYZER`.
+
+Normal execution inherits `skn`’s path-check requirement;
+see the main README’s [path-check section](../README.md#path-checks).
+
+### Simple setup
+
+The least surprising setup is to install the wrappers under their own names:
+```sh
+mkdir -p ~/.local/bin
+install rust/skn-cargo ~/.local/bin/skn-cargo
+install rust/skn-rust-analyzer ~/.local/bin/skn-rust-analyzer
 ```
 
-Then use an alias or editor-specific configuration where desired:
-
+Then use aliases or editor-specific configuration where desired:
 ```sh
 alias cargo=skn-cargo
 ```
 
-### Strict PATH mode
+This keeps the real Cargo and rust-analyzer commands available
+under their normal installation paths,
+while making the sandboxed wrappers explicit.
 
-For untrusted-work environments, you may choose to shadow Cargo and rust-analyzer from an earlier `PATH` directory so editors and IDEs that ignore shell aliases still find the wrappers:
+### Strict setup
 
-```text
-~/bin/skn-strict/cargo          -> skn-cargo
-~/bin/skn-strict/rust-analyzer  -> skn-rust-analyzer
-```
+A more robust setup is to keep Cargo’s bin directory out of the regular `PATH`
+and expose it only through launcher scripts that ensure sandboxing.
+This avoids accidentally running custom Cargo subcommands such as `cargo-upgrade`
+directly and unsandboxed.
+Shell aliases are also often ignored by editors and IDEs
+when they launch `cargo` or `rust-analyzer`.
 
-Do not overwrite rustup’s real proxies in `$CARGO_HOME/bin`;
-put symlinks or small launcher scripts in an earlier directory instead.
-In this mode, set explicit real-tool commands so the wrappers do not recurse back into themselves:
+Put launcher scripts in a directory that is in `PATH`, for example `~/bin`.
+Do not put these launchers in Cargo home,
+and do not overwrite rustup’s real proxies in `~/.cargo/bin` or `$CARGO_HOME/bin`.
 
-```sh
-export SKN_REAL_CARGO="$HOME/.cargo/bin/cargo"
-export SKN_REAL_RUST_ANALYZER="$HOME/.cargo/bin/rust-analyzer"
-PATH="$HOME/bin/skn-strict:$PATH" editor
-```
-
-Strict PATH mode requires these explicit real-tool settings.
-`skn-cargo` uses a bounded recursion-depth guard to let ordinary recursive Cargo calls from custom subcommands work while still turning wrapper loops into clear errors instead of hangs.
-The limit is configurable for unusual workflows.
-
-`skn-cargo` runs `${SKN_REAL_CARGO:-cargo}`.
-If `SKN_REAL_CARGO` is set, it also sets `CARGO` to that value inside the sandbox;
-otherwise it does not override `CARGO` and any inherited value remains visible,
-though Cargo normally sets `CARGO` for its own subprocesses.
-`skn-rust-analyzer` runs `${SKN_REAL_RUST_ANALYZER:-rust-analyzer}` and always sets `CARGO=${SKN_REAL_CARGO:-cargo}` inside the sandbox,
-because rust-analyzer uses `CARGO` to find Cargo.
-The `SKN_REAL_*` values are used literally as command names or paths;
-absolute paths are recommended in strict PATH setups.
-
-If you use launcher scripts to add local sandbox grants, put the real-tool override in the launcher, for example:
-
+A strict `cargo` launcher can look like this:
 ```sh
 #!/bin/sh
-exec env SKN_REAL_CARGO="$HOME/.cargo/bin/cargo" \
-    skn-cargo +W "$HOME/.cargo-symlink-target" "$@"
+# Run skn-cargo with Cargo’s bin directory available only inside the sandbox.
+
+cargo_home=${CARGO_HOME:-${HOME:?HOME is not set}/.cargo}
+cargo_bin="$cargo_home/bin"
+
+case ":$PATH:" in
+    *:"$cargo_bin":*)
+        echo "error: $cargo_bin is already in PATH" >&2
+        exit 2
+        ;;
+esac
+
+export SKN_REAL_CARGO="$cargo_bin/cargo"
+
+exec skn-cargo +V "PATH=$cargo_bin:$PATH" "$@"
 ```
 
-Strict PATH mode is useful for avoiding accidental vanilla Cargo use,
-but it is not perfectly transparent.
-Some tools use absolute paths, `$CARGO`, rustup directly, or editor-specific tool configuration.
-The named-wrapper setup remains the least surprising default.
+A strict `rust-analyzer` launcher should name the real tools explicitly:
+```sh
+#!/bin/sh
+# Run rust-analyzer sandboxed.
+
+cargo_home=${CARGO_HOME:-${HOME:?HOME is not set}/.cargo}
+cargo_bin="$cargo_home/bin"
+
+export SKN_REAL_CARGO="$cargo_bin/cargo"
+export SKN_REAL_RUST_ANALYZER="$cargo_bin/rust-analyzer"
+exec skn-rust-analyzer "$@"
+```
+
+If Cargo or rust-analyzer comes from a system package manager or another installation,
+set `SKN_REAL_CARGO` and `SKN_REAL_RUST_ANALYZER` to those real paths instead.
+
+## Sandbox details
+
+Automatic grants are visible with `+S` and are still checked by `SKN_PATH_CHECK`.
+
+`skn-cargo` gives dependency-management subcommands such as `fetch` and `update`
+network access automatically.
+Known build-like subcommands such as `build`, `test`, `run`, `doc`, and `install`
+are forced offline and refuse explicit `+N`.
+Other identifiable Cargo subcommands run offline by default,
+but may allow explicit `+N` when `skn-cargo` accepts the command shape.
+The exact policy lists live near the top of [`skn-cargo`](skn-cargo).
+
+This means that building after dependency changes may require two steps,
+for example `skn-cargo fetch` followed by `skn-cargo build`.
+The extra step is intentional.
+
+`skn-rust-analyzer` follows the same separation:
+fetch dependencies separately, then run rust-analyzer offline.
+It refuses network access.
+Given current [rust-analyzer design](https://github.com/rust-lang/rust-analyzer/issues/22118),
+rust-analyzer and its Cargo subprocesses need writable workspace state.
+
+`skn-cargo` grants the detected Cargo workspace writable access.
+Outside a workspace, it does not bind the current directory for general commands.
+Project-creation commands get narrower grants:
+`cargo new PATH` grants the parent directory,
+and `cargo init` grants the target directory when it already exists,
+or its parent otherwise.
+
+`skn-cargo` refuses the ordinary networked form of `cargo install CRATE`,
+because it downloads code and builds it in one step.
+If you intentionally want that less restrictive workflow,
+run the real Cargo command yourself inside an explicitly networked `skn` shell.
+
+`skn-rust-analyzer` runs rust-analyzer itself inside the sandbox.
+Cargo, rustc, build scripts, proc macros, tests,
+and other subprocesses launched by rust-analyzer inherit that sandbox.
+It grants the detected Cargo workspace writable access;
+if no workspace is found from the current directory,
+it binds the current directory read-only so rust-analyzer can still start.
+Both wrappers bind Cargo home writable and rustup home read-only when those directories exist.
+
+The Rust wrappers pass `+E` to `skn` for compatibility with Rust toolchains,
+Cargo configuration, and project-specific build setups.
+Build scripts, proc macros, tests,
+and related subprocesses may therefore be able to read environment variables containing secrets.
+A writable Cargo home may expose registry credentials
+and allow persistent changes to Cargo configuration and cache state.
+If Cargo registry credentials are needed,
+prefer [global credential providers](https://doc.rust-lang.org/cargo/reference/registry-authentication.html)
+over storing tokens directly in Cargo home.
