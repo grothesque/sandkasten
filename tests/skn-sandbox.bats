@@ -17,6 +17,17 @@ load 'helpers/common'
     assert_output_contains 'rejected'
 }
 
+@test 'reports multiple SKN_PATH_CHECK rejections before aborting' {
+    dir1="$BATS_TEST_TMPDIR/rejected-ro"
+    dir2="$BATS_TEST_TMPDIR/rejected-writable"
+    mkdir -p "$dir1" "$dir2"
+
+    run env SKN_PATH_CHECK=false "$SKN" true +R "$dir1" +W "$dir2"
+    assert_status 2
+    assert_output_contains "SKN_PATH_CHECK rejected $dir1 (+R option)"
+    assert_output_contains "SKN_PATH_CHECK rejected $dir2 (+W option)"
+}
+
 @test 'launch cwd is not implicitly exposed' {
     require_working_skn
 
