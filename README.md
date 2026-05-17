@@ -88,16 +88,13 @@ see the [Rust wrappers README](rust/README.md).
 
 ## First run
 
-To explore the default sandbox without configuring a path checker yet, start a shell:
+To explore the default sandbox with the shipped example path checker, start a shell:
 ```sh
-SKN_PATH_CHECK=true ./skn bash +R.
+SKN_PATH_CHECK=./example-path-check ./skn bash +R.
 ```
 
 The current directory is visible read-only because of `+R.`,
 `/tmp` is private and writable, and network access is disabled.
-
-`SKN_PATH_CHECK=true` disables path policy and is convenient for first experiments.
-Before routine use, configure a real `SKN_PATH_CHECK`; see [Path checks](#path-checks).
 
 ## Invoking `skn`
 
@@ -210,45 +207,17 @@ such as running `skn command +W .` directly under `/home/user`.
 The caller still chooses the access mode:
 use `+W` only for paths where persistent writes are intended.
 
+An example checker is provided as [`example-path-check`](example-path-check).
+The example checker is intentionally permissive:
+it rejects obvious mistakes while staying out of the way for ordinary project, cache, and tool paths.
+It is a sample guardrail, not a definitive safety check.
+Adjust or replace it as needed.
+The checker is responsible for canonicalization, symlink handling, and any other policy requirements.
+
 For testing, path checking can be disabled with
 ```sh
 export SKN_PATH_CHECK=true
 ```
-
-One simple useful path-check script is
-```sh
-#!/bin/bash
-set -euo pipefail
-
-[ "$#" -eq 1 ] || { echo "usage: ${0##*/} PATH" >&2; exit 2; }
-
-# Canonicalize $HOME for reliable matching.
-home=$(realpath -ms -- "${HOME:?}")
-
-# Check both the path as written and the path with symlinks resolved.
-for path in "$(realpath -ms -- "$1")" "$(realpath -m -- "$1")"; do
-    case "$path/" in
-        # Allow descendants of $HOME and /tmp, but not those directories themselves.
-        "$home"/?*|/tmp/?*) ;;
-
-        # Reject everything else.
-        *) exit 1 ;;
-    esac
-
-    # As a simple secrecy heuristic, reject paths that are not readable by “other”.
-    [[ $(stat -c %A -- "$path") == ???????r?? ]] || exit 1
-done
-```
-Save it as `~/bin/is-ok-for-untrusted`, make it executable, and enable it with
-```sh
-chmod +x ~/bin/is-ok-for-untrusted
-export SKN_PATH_CHECK="$HOME/bin/is-ok-for-untrusted"
-```
-
-The example above is intentionally permissive:
-it rejects obvious mistakes while staying out of the way for ordinary project, cache, and tool paths.
-Adjust it as needed.
-The checker is responsible for canonicalization, symlink handling, and any other policy requirements.
 
 ### Additional read-only binds
 

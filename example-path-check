@@ -1,0 +1,31 @@
+#!/bin/bash
+# Example SKN_PATH_CHECK command for skn.
+#
+# This is a sample guardrail, not a definitive safety check. It rejects broad
+# or surprising path grants while allowing ordinary descendants of $HOME and
+# /tmp that are readable by “other”. Adjust or replace it for your own policy.
+
+set -euo pipefail
+
+if (($# != 1)); then
+    echo "usage: ${0##*/} PATH" >&2
+    exit 2
+fi
+
+# Canonicalize $HOME for reliable matching.
+home=$(realpath -ms -- "${HOME:?}")
+
+# Check both the path as written and the path with symlinks resolved.
+for path in "$(realpath -ms -- "$1")" "$(realpath -m -- "$1")"; do
+    case "$path/" in
+        # Allow descendants of $HOME and /tmp, but not those directories themselves.
+        "$home"/?*|/tmp/?*) ;;
+
+        # Reject everything else.
+        *) exit 1 ;;
+    esac
+
+    # As a simple secrecy heuristic, reject paths that are not readable by “other”.
+    mode=$(stat -c %A -- "$path") || exit 1
+    [[ $mode == ???????r?? ]] || exit 1
+done
