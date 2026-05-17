@@ -306,10 +306,11 @@ Note that bandit still does not need writable project access.
 [Biome](https://biomejs.dev/) serves here as an example of an npm-installed command-line tool
 that normally runs without network access.
 
-Assuming `~/.npmrc` configures `~/.npm-global` as the npm prefix,
-and `~/.npm-global` and `~/.npm` already exist, the following shell alias is useful:
+Assuming `~/.npm-global` and `~/.npm` already exist,
+configure the npm prefix through the environment:
 ```sh
-alias skn-npm='skn npm +R ~/.npmrc +W ~/.npm-global +W ~/.npm'
+export NPM_CONFIG_PREFIX="$HOME/.npm-global"
+alias skn-npm='skn npm +V NPM_CONFIG_PREFIX +W ~/.npm-global +W ~/.npm'
 ```
 Replace `+W ~/.npm` with `+T ~/.npm` in the alias to discard npm cache writes.
 
