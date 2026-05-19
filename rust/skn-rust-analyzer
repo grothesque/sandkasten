@@ -60,22 +60,39 @@ locate_workspace_manifest() {
     return 1
 }
 
-# Parses skn’s +I info header block. This delegates option parsing to skn
+# Parses skn’s +0 machine-readable info. This delegates option parsing to skn
 # itself instead of mirroring skn’s option grammar here.
 network_enabled_from_skn_info() {
-    local line state=
+    local argc format header_done=0 i line state
 
     while IFS= read -r line; do
-        [[ $line == skn:\ * ]] || break
+        [[ -n $line ]] || { header_done=1; break; }
+
         case $line in
-            "skn: network "*) state=${line#"skn: network "}; break ;;
+            "format: "*) format=${line#"format: "} ;;
+            "network: "*) state=${line#"network: "} ;;
+            "argc: "*) argc=${line#"argc: "} ;;
+            *": "*) ;;
+            *) return 2 ;;
         esac
+    done
+
+    ((header_done)) || return 2
+    [[ ${format:-} == skn-info-mk1 ]] || return 2
+    case $state in
+        enabled|disabled) ;;
+        *) return 2 ;;
+    esac
+    [[ ${argc:-} =~ ^[0-9]+$ ]] || return 2
+    ((10#$argc >= 1)) || return 2
+
+    for ((i = 0; i < 10#$argc; ++i)); do
+        IFS= read -r -d '' || return 2
     done
 
     case $state in
         enabled) return 0 ;;
         disabled) return 1 ;;
-        *) return 2 ;;
     esac
 }
 
@@ -108,16 +125,14 @@ cargo_home=${CARGO_HOME:-${HOME:+$HOME/.cargo}}
 rustup_home=${RUSTUP_HOME:-${HOME:+$HOME/.rustup}}
 [[ -n $rustup_home && -e $rustup_home ]] && skn_args+=(+R "$rustup_home")
 
-skn_info_output=$("${skn_args[@]}" +I "$@") || exit $?
-
-if network_enabled_from_skn_info <<<"$skn_info_output"; then
+if network_enabled_from_skn_info < <("${skn_args[@]}" +0 "$@"); then
     echo "$progname: refusing +N: rust-analyzer can execute project code via Cargo subprocesses" >&2
     echo "$progname: fetch dependencies separately, for example with skn-cargo fetch, then run rust-analyzer offline" >&2
     exit 2
 else
     case $? in
         1) skn_args+=(+V CARGO_NET_OFFLINE=true) ;;
-        *) echo "$progname: internal error parsing skn +I output" >&2; exit 2 ;;
+        *) echo "$progname: internal error parsing skn +0 output" >&2; exit 2 ;;
     esac
 fi
 

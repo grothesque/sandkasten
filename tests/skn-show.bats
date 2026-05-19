@@ -62,24 +62,84 @@ load 'helpers/common'
     assert_output_not_contains '/etc/hosts'
 }
 
-@test '+I prints only the info header and skips path checks and filesystem validation' {
-    run env -u SKN_PATH_CHECK "$SKN" true +I +R ./missing-ro +W ./missing-w +T ./missing-t
+@test '+0 prints machine-readable info and skips path checks and filesystem validation' {
+    run bash -c 'env -u SKN_PATH_CHECK "$1" true +0 +R ./missing-ro +W ./missing-w +T ./missing-t | tr "\0" "\n"' _ "$SKN"
 
     assert_success
-    assert_output_contains 'skn: sandboxed command: true'
-    assert_output_contains 'skn: network disabled'
-    assert_output_contains 'skn: environment mostly cleared'
-    assert_output_contains 'skn: equivalent invocation:'
+    assert_output_contains 'skn-info-mk1'
+    assert_output_contains 'network'
+    assert_output_contains 'disabled'
+    assert_output_contains 'environment'
+    assert_output_contains 'cleared'
+    assert_output_contains 'argc: 1'
+    assert_output_contains 'true'
     assert_output_not_contains 'skn: resulting bwrap invocation:'
 }
 
-@test '+I takes precedence over +S' {
-    run env -u SKN_PATH_CHECK "$SKN" true +I +S +R ./missing-ro
+@test '+0 takes precedence over +S' {
+    run bash -c 'env -u SKN_PATH_CHECK "$1" true +0 +S +R ./missing-ro | tr "\0" "\n"' _ "$SKN"
 
     assert_success
-    assert_output_contains 'skn: sandboxed command: true'
-    assert_output_contains 'skn: equivalent invocation:'
+    assert_output_contains 'skn-info-mk1'
+    assert_output_contains 'argc: 1'
+    assert_output_contains 'true'
     assert_output_not_contains 'skn: resulting bwrap invocation:'
+}
+
+@test '+0 preserves parsed argv exactly' {
+    run bash -s "$SKN" <<'EOF'
+set -euo pipefail
+
+skn=$1
+expected=(
+    cmd
+    ''
+    'space arg'
+    $'line\narg'
+    'quote'\''"back\slash'
+    '+Xafter'
+    '-dash'
+)
+
+format=
+network=
+argc=
+header_done=0
+
+exec {info_fd}< <(
+    env -u SKN_PATH_CHECK "$skn" cmd +0 \
+        +A '' \
+        +A 'space arg' \
+        +A $'line\narg' \
+        -- 'quote'\''"back\slash' '+Xafter' '-dash'
+)
+
+while IFS= read -r -u "$info_fd" line; do
+    [[ -n $line ]] || { header_done=1; break; }
+    case $line in
+        'format: '*) format=${line#'format: '} ;;
+        'network: '*) network=${line#'network: '} ;;
+        'argc: '*) argc=${line#'argc: '} ;;
+    esac
+done
+
+((header_done))
+[[ $format == skn-info-mk1 ]]
+[[ $network == disabled ]]
+[[ $argc == "${#expected[@]}" ]]
+
+actual=()
+for ((i = 0; i < 10#$argc; ++i)); do
+    IFS= read -r -d '' -u "$info_fd" arg
+    actual+=("$arg")
+done
+
+[[ ${#actual[@]} == ${#expected[@]} ]]
+for ((i = 0; i < ${#expected[@]}; ++i)); do
+    [[ ${actual[i]} == "${expected[i]}" ]]
+done
+EOF
+    assert_success
 }
 
 @test '+S still rejects malformed skn options' {
@@ -106,7 +166,7 @@ load 'helpers/common'
 }
 
 @test 'unknown uppercase skn options are reserved' {
-    run env -u SKN_PATH_CHECK "$SKN" true +I +Qfuture
+    run env -u SKN_PATH_CHECK "$SKN" true +0 +Qfuture
 
     assert_status 2
     assert_output_contains 'reserved'
@@ -114,17 +174,21 @@ load 'helpers/common'
 }
 
 @test 'reserved-looking command arguments can be passed after --' {
-    run env -u SKN_PATH_CHECK "$SKN" cargo +I -- +Xtoolchain build
+    run bash -c 'env -u SKN_PATH_CHECK "$1" cargo +0 -- +Xtoolchain build | tr "\0" "\n"' _ "$SKN"
 
     assert_success
-    assert_output_contains 'skn: sandboxed command: cargo +Xtoolchain build'
+    assert_output_contains 'cargo'
+    assert_output_contains '+Xtoolchain'
+    assert_output_contains 'build'
 }
 
 @test 'lowercase plus command arguments still stop skn option parsing' {
-    run env -u SKN_PATH_CHECK "$SKN" cargo +I +nightly build
+    run bash -c 'env -u SKN_PATH_CHECK "$1" cargo +0 +nightly build | tr "\0" "\n"' _ "$SKN"
 
     assert_success
-    assert_output_contains 'skn: sandboxed command: cargo +nightly build'
+    assert_output_contains 'cargo'
+    assert_output_contains '+nightly'
+    assert_output_contains 'build'
 }
 
 @test '+S accepts absolute SKN_RO_BINDS entries' {

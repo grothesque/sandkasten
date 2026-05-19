@@ -29,7 +29,7 @@ such as /bin and /lib, and a few selected parts of /etc, all read-only. DNS
 configuration and common public CA root locations are added only with +N.
 Other host data is not visible unless explicitly bound into the sandbox with
 +R/+W/+T or configured read-only through SKN_RO_BINDS. When not using +S or
-+I, paths provided through +R/+W/+T are validated by the mandatory
++0, paths provided through +R/+W/+T are validated by the mandatory
 SKN_PATH_CHECK command.
 
 skn-options:
@@ -42,14 +42,14 @@ skn-options:
   +N              enable network access
   +E              preserve caller environment instead of clearing it
   +S              show the sandbox plan after parsing, then exit
-  +I              show only the parsed skn info header, then exit
+  +0              emit machine-readable parsed info (for wrappers), then exit
   --              stop parsing skn options
 
 While skn is parsing options, unrecognized +<uppercase> forms are reserved
 for future skn options; use -- before command arguments that look like that.
 
 Environment:
-  SKN_PATH_CHECK  mandatory unless +S or +I is used; command used to validate
+  SKN_PATH_CHECK  mandatory unless +S or +0 is used; command used to validate
                   paths from +R/+W/+T; executed directly with the path as its
                   only argument. Set to 'true' to disable.
   SKN_RO_BINDS    colon-separated absolute paths to bind read-only
@@ -381,8 +381,6 @@ add_network_bwrap_setup() {
 }
 
 print_info_header() {
-    # Suite-internal +I contract: wrappers may parse this block of "skn: "
-    # lines, which includes exactly one network line. The block ends at EOF.
     printf 'skn: sandboxed command: %s\n' "$(quote_shell_words "$cmd" "${command_args[@]}" "$@")"
 
     if ((network)); then
@@ -398,6 +396,29 @@ print_info_header() {
     fi
 
     printf 'skn: equivalent invocation: %s\n' "$(quote_shell_words "$progname" "$cmd" "${skn_option_args[@]}" -- "${command_args[@]}" "$@")"
+}
+
+print_machine_info() {
+    local argc
+
+    argc=$((1 + ${#command_args[@]} + $#))
+
+    printf 'format: skn-info-mk1\n'
+    if ((network)); then
+        printf 'network: enabled\n'
+    else
+        printf 'network: disabled\n'
+    fi
+
+    if ((preserve_env)); then
+        printf 'environment: preserved\n'
+    else
+        printf 'environment: cleared\n'
+    fi
+
+    printf 'argc: %d\n' "$argc"
+    printf '\n'
+    printf '%s\0' "$cmd" "${command_args[@]}" "$@"
 }
 
 if (($# == 0)); then
@@ -424,7 +445,7 @@ esac
 network=0
 preserve_env=0
 show_mode=0
-info_mode=0
+machine_mode=0
 command_args=()
 skn_option_args=()
 env_queue=()
@@ -467,8 +488,8 @@ while (($#)); do
             shift
             continue
             ;;
-        +I)
-            info_mode=1
+        +0)
+            machine_mode=1
             shift
             continue
             ;;
@@ -521,8 +542,8 @@ while (($#)); do
     skn_option_args+=("$option" "$path")
 done
 
-if ((info_mode)); then
-    print_info_header "$@"
+if ((machine_mode)); then
+    print_machine_info "$@"
     exit 0
 fi
 

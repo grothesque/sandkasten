@@ -128,9 +128,12 @@ Options:
 +N            enable network access
 +E            preserve caller environment instead of clearing it
 +S            show the sandbox plan after parsing, then exit
-+I            show only the parsed skn info header, then exit
++0            emit machine-readable parsed info (for wrappers), then exit
 --            stop parsing skn options
 ```
+
+`+0` is intended for wrappers and similar tooling.
+See the source code for the current format.
 
 Bind options are order-sensitive.
 For example, `+T. +W ./out` makes the current directory transient-writable,

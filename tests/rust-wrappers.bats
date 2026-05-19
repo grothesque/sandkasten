@@ -19,7 +19,7 @@ set -euo pipefail
 
 has_info=0
 for arg in "$@"; do
-    [[ $arg == +I ]] && has_info=1
+    [[ $arg == +0 ]] && has_info=1
 done
 
 if ((has_info)); then
@@ -185,7 +185,7 @@ read_final_args() {
 
     info_args="$BATS_TEST_TMPDIR/info.lines"
     write_args_lines "$FAKE_SKN_INFO_ARGS" "$info_args"
-    assert_args_contain "$info_args" '+I'
+    assert_args_contain "$info_args" '+0'
 
     args="$BATS_TEST_TMPDIR/final.lines"
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
@@ -612,18 +612,19 @@ EOF
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 }
 
-@test 'Rust wrappers surface skn +I failures and malformed headers' {
+@test 'Rust wrappers surface skn +0 failures and malformed output' {
     export FAKE_SKN_INFO_RESULT=fail
     export FAKE_SKN_INFO_STATUS=37
 
     run "$SKN_CARGO" build
-    assert_status 37
+    assert_status 2
+    assert_output_contains 'parsing skn +0 output'
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 
     export FAKE_SKN_INFO_RESULT=malformed
     run "$SKN_RUST_ANALYZER" --stdio
     assert_status 2
-    assert_output_contains 'parsing skn +I output'
+    assert_output_contains 'parsing skn +0 output'
 }
 
 @test 'skn-rust-analyzer refuses network access' {

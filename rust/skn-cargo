@@ -74,31 +74,41 @@ locate_workspace_manifest() {
     return 1
 }
 
-# Parses skn’s +I info header block. This delegates option parsing to skn
+# Parses skn’s +0 machine-readable info. This delegates option parsing to skn
 # itself instead of mirroring skn’s option grammar here.
 parse_skn_info() {
-    local line command_words=
+    local argc arg format header_done=0 i line
     local -a skn_command_argv=()
 
     skn_network_state=
     cargo_argv=()
 
     while IFS= read -r line; do
-        [[ $line == skn:\ * ]] || break
+        [[ -n $line ]] || { header_done=1; break; }
+
         case $line in
-            "skn: sandboxed command: "*) command_words=${line#"skn: sandboxed command: "} ;;
-            "skn: network "*) skn_network_state=${line#"skn: network "} ;;
+            "format: "*) format=${line#"format: "} ;;
+            "network: "*) skn_network_state=${line#"network: "} ;;
+            "argc: "*) argc=${line#"argc: "} ;;
+            *": "*) ;;
+            *) return 1 ;;
         esac
     done
 
-    [[ -n $command_words ]] || return 1
+    ((header_done)) || return 1
+    [[ ${format:-} == skn-info-mk1 ]] || return 1
     case $skn_network_state in
         enabled|disabled) ;;
         *) return 1 ;;
     esac
+    [[ ${argc:-} =~ ^[0-9]+$ ]] || return 1
+    ((10#$argc >= 1)) || return 1
 
-    eval "skn_command_argv=($command_words)" || return 1
-    ((${#skn_command_argv[@]} > 0)) || return 1
+    for ((i = 0; i < 10#$argc; ++i)); do
+        IFS= read -r -d '' arg || return 1
+        skn_command_argv+=("$arg")
+    done
+
     cargo_argv=("${skn_command_argv[@]:1}")
 }
 
@@ -275,10 +285,8 @@ if [[ -n ${SKN_REAL_CARGO:-} ]]; then
     skn_args+=(+V "CARGO=$real_cargo")
 fi
 
-skn_info_output=$("${skn_args[@]}" +I "$@") || exit $?
-
-if ! parse_skn_info <<<"$skn_info_output"; then
-    echo "$progname: internal error parsing skn +I output" >&2
+if ! parse_skn_info < <("${skn_args[@]}" +0 "$@"); then
+    echo "$progname: internal error parsing skn +0 output" >&2
     exit 2
 fi
 
