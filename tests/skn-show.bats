@@ -18,7 +18,7 @@ load 'helpers/common'
 }
 
 @test '+S reports network, preserved environment, and prepended command args' {
-    run env -u SKN_PATH_CHECK "$SKN" echo +S +N +E +A -n -- hello
+    run env -u SKN_PATH_CHECK "$SKN" echo +S +N +E +A -n ++ hello
 
     assert_success
     assert_output_contains 'skn: sandboxed command: echo -n hello'
@@ -111,7 +111,7 @@ exec {info_fd}< <(
         +A '' \
         +A 'space arg' \
         +A $'line\narg' \
-        -- 'quote'\''"back\slash' '+Xafter' '-dash'
+        ++ 'quote'\''"back\slash' '+Xafter' '-dash'
 )
 
 while IFS= read -r -u "$info_fd" line; do
@@ -173,8 +173,8 @@ EOF
     assert_output_contains '+Qfuture'
 }
 
-@test 'reserved-looking command arguments can be passed after --' {
-    run bash -c 'env -u SKN_PATH_CHECK "$1" cargo +0 -- +Xtoolchain build | tr "\0" "\n"' _ "$SKN"
+@test 'reserved-looking command arguments can be passed after ++' {
+    run bash -c 'env -u SKN_PATH_CHECK "$1" cargo +0 ++ +Xtoolchain build | tr "\0" "\n"' _ "$SKN"
 
     assert_success
     assert_output_contains 'cargo'

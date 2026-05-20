@@ -99,7 +99,7 @@ The current directory is visible read-only because of `+R.`,
 ## Invoking `skn`
 
 ```sh
-skn COMMAND [skn-options] [--] [COMMAND-args...]
+skn COMMAND [skn-options] [++] [COMMAND-args...]
 ```
 
 `COMMAND` comes before `skn` options.
@@ -114,8 +114,8 @@ and passes `run` to `foo`.
 `skn` parses only the initial run of `+` options after `COMMAND`.
 The first non-option argument ends that run and is passed on to `COMMAND`.
 Unrecognized uppercase `+` forms are reserved for future `skn` options.
-Use `--` to explicitly cease parsing of skn options and pass the remainder to `COMMAND`.
-For example, in `skn echo -- +R`, `+R` is passed to `echo`.
+Use `++` to explicitly cease parsing of skn options and pass the remainder to `COMMAND`.
+For example, in `skn echo ++ +R`, `+R` is passed to `echo`.
 
 Options:
 ```text
@@ -129,7 +129,7 @@ Options:
 +E            preserve caller environment instead of clearing it
 +S            show the sandbox plan after parsing, then exit
 +0            emit machine-readable parsed info (for wrappers), then exit
---            stop parsing skn options
+++            stop parsing skn options
 ```
 
 `+0` is intended for wrappers and similar tooling.
@@ -357,14 +357,14 @@ These wrappers also serve as examples of building tool-specific wrappers around 
 Use `+T` when a tool insists on writing into a tree but its changes should not be kept,
 for example with
 ```sh
-skn make +T. -- test
+skn make +T. ++ test
 ```
 
 Bind order matters. To make most of the project transient-writable
 while keeping `target` persistent, use
 ```sh
 mkdir -p target
-skn make +T. +W ./target -- test
+skn make +T. +W ./target ++ test
 ```
 
 ## Sandbox model

@@ -6,7 +6,7 @@ progname="${0##*/}"
 
 usage() {
     cat <<EOF
-Usage: $progname COMMAND [skn-options] [--] [COMMAND-args...]
+Usage: $progname COMMAND [skn-options] [++] [COMMAND-args...]
 
 Run COMMAND inside a bwrap sandbox intended for untrusted code. The sandbox
 has a private /tmp, a neutral hostname, a mostly cleared environment unless
@@ -22,7 +22,7 @@ alias foo='skn foo'
 Now, the foo alias behaves almost like the unwrapped foo command, except that
 it runs sandboxed and accepts skn + options before the wrapped command's own
 arguments. If the unwrapped foo needs an argument that looks like a skn option,
-it can be given after another command argument, or -- can be used.
+it can be given after another command argument, or ++ can be used.
 
 The only host data bound by default is /usr, optional system runtime paths
 such as /bin and /lib, and a few selected parts of /etc, all read-only. DNS
@@ -43,10 +43,10 @@ skn-options:
   +E              preserve caller environment instead of clearing it
   +S              show the sandbox plan after parsing, then exit
   +0              emit machine-readable parsed info (for wrappers), then exit
-  --              stop parsing skn options
+  ++              stop parsing skn options
 
 While skn is parsing options, unrecognized +<uppercase> forms are reserved
-for future skn options; use -- before command arguments that look like that.
+for future skn options; use ++ before command arguments that look like that.
 
 Environment:
   SKN_PATH_CHECK  mandatory unless +S or +0 is used; command used to validate
@@ -395,7 +395,7 @@ print_info_header() {
         echo "skn: environment mostly cleared"
     fi
 
-    printf 'skn: equivalent invocation: %s\n' "$(quote_shell_words "$progname" "$cmd" "${skn_option_args[@]}" -- "${command_args[@]}" "$@")"
+    printf 'skn: equivalent invocation: %s\n' "$(quote_shell_words "$progname" "$cmd" "${skn_option_args[@]}" ++ "${command_args[@]}" "$@")"
 }
 
 print_machine_info() {
@@ -467,7 +467,7 @@ queue_pass_vars
 # env.
 while (($#)); do
     case $1 in
-        --)
+        ++)
             shift
             break
             ;;
@@ -531,7 +531,7 @@ while (($#)); do
             ;;
         +[A-Z]*)
             echo "$progname: reserved skn option: $1" >&2
-            error "use -- before command arguments that start with +<uppercase>"
+            error "use ++ before command arguments that start with +<uppercase>"
             ;;
         *)
             break

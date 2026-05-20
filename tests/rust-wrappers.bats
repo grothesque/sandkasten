@@ -345,7 +345,7 @@ read_final_args() {
     assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
 
     rm -f "$FAKE_SKN_FINAL_ARGS"
-    run "$SKN_CARGO" +N -- +Xtoolchain fetch
+    run "$SKN_CARGO" +N ++ +Xtoolchain fetch
     assert_success
 
     args="$BATS_TEST_TMPDIR/final-reserved-looking-toolchain.lines"
