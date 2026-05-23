@@ -70,18 +70,19 @@ Together, they provide a defense-in-depth setup for coding-agent use.
 `skn` is a simple Bash script.
 Besides [bubblewrap](https://github.com/containers/bubblewrap),
 it requires only common Unix tools such as `realpath` and `dirname`.
+The optional `with-tty` helper is also a Bash script and requires `tmux`.
 
-Install `skn` in any directory on `PATH`.
+Install `skn`, and optionally `with-tty`, in any directory on `PATH`.
 For example:
 ```sh
 mkdir -p ~/.local/bin
-install skn ~/.local/bin
+install skn with-tty ~/.local/bin
 ```
 
 Copying is simplest; symlinking from a checkout is also fine.
 If needed, add the install directory to `PATH` in a shell startup file.
 
-`skn` can also be run directly from a checkout.
+`skn` and `with-tty` can also be run directly from a checkout.
 
 The Rust wrappers have their own requirements and installation notes;
 see the [Rust wrappers README](rust/README.md).
@@ -150,8 +151,9 @@ This runs `foo --format json input` with read-only access to the current directo
 
 `skn` starts the sandbox in a new terminal session,
 so programs that open `/dev/tty` directly may fail even when ordinary stdin/stdout works.
-For such interactive programs, consider running `tmux` inside the sandbox,
-for example `skn tmux +R. new-session`.
+For such interactive programs, run the optional `with-tty` helper inside the sandbox.
+It creates a private tmux PTY for the real command and leaves an inspection shell
+on output, failure, or suspension; for example, `skn with-tty +A bash +R.`.
 
 Run `skn` without arguments to output a usage message and exit.
 
@@ -252,7 +254,8 @@ These examples assume that `skn` is installed and that `SKN_PATH_CHECK` is confi
 Use `+S` first to inspect the sandbox plan without running the command.
 To explore a sandbox interactively before running a command,
 copy the equivalent `skn` invocation shown by `+S`,
-replace the command and its arguments with `bash` or `tmux`,
+replace the command and its arguments with `bash`,
+or with `with-tty +A bash` if the command needs `/dev/tty`,
 and keep the desired sandbox options.
 
 ### Running an untrusted project command read-only

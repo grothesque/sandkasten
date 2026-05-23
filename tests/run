@@ -7,6 +7,7 @@ cd "$repo_root"
 
 shell_files=(
     ./skn
+    ./with-tty
     ./example-path-check
     ./rust/skn-cargo
     ./rust/skn-rust-analyzer

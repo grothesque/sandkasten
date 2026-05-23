@@ -9,6 +9,11 @@
   that emits a machine-readable format with a NUL-delimited argv.
   This avoids having to use `eval` in wrappers (like those under `rust/`).
 
+### Added
+
+- Add `with-tty`, a helper for running interactive commands with a usable TTY,
+  job control, and an inspection shell.
+
 ## [0.1.1] - 2026-05-18
 
 ### Fixed
