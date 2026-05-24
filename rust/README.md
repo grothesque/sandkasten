@@ -60,7 +60,7 @@ skn-cargo +S build
 skn-rust-analyzer +S
 ```
 
-The general `skn` option syntax is documented in the [main README](../README.md).
+The general `skn` option syntax is documented in the [usage guide](../USAGE.md#invoking-skn).
 
 ## Setup
 
@@ -73,7 +73,7 @@ The corresponding real tools must be either in `PATH`
 or set explicitly using `SKN_REAL_CARGO` and `SKN_REAL_RUST_ANALYZER`.
 
 Normal execution inherits `skn`’s path-check requirement;
-see the main README’s [path-check section](../README.md#path-checks).
+see the usage guide’s [path-check section](../USAGE.md#path-checks).
 
 ### Simple setup
 
