@@ -2,6 +2,15 @@
 
 For worked command-line recipes, see [Sandkasten recipes](EXAMPLES.md).
 
+Contents:
+
+- [Setup](#setup)
+- [Invoking `skn`](#invoking-skn)
+- [Configuration](#configuration)
+- [Sandbox model](#sandbox-model)
+- [Threat model and non-goals](#threat-model-and-non-goals)
+- [Testing](#testing)
+
 ## Setup
 
 Normal execution requires `SKN_PATH_CHECK` to name a path-check command.
