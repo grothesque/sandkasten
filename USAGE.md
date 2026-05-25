@@ -6,6 +6,7 @@ Contents:
 
 - [Setup](#setup)
 - [Invoking `skn`](#invoking-skn)
+- [Interactive commands and `with-tty`](#interactive-commands-and-with-tty)
 - [Configuration](#configuration)
 - [Sandbox model](#sandbox-model)
 - [Threat model and non-goals](#threat-model-and-non-goals)
@@ -82,11 +83,8 @@ foo-json +R. input
 ```
 This runs `foo --format json input` with read-only access to the current directory.
 
-`skn` starts the sandbox in a new terminal session,
-so programs that open `/dev/tty` directly may fail even when ordinary stdin/stdout works.
-For such interactive programs, run the optional `with-tty` helper inside the sandbox.
-It creates a private tmux PTY for the real command and leaves an inspection shell
-on output, failure, or suspension; for example, `skn with-tty +A bash +R.`.
+Some interactive programs need a controlling TTY or shell job control;
+for those, see [Interactive commands and `with-tty`](#interactive-commands-and-with-tty).
 
 Run `skn` without arguments to output a usage message and exit.
 
@@ -125,6 +123,41 @@ and sets `SKN_PATH_CHECK=true` by default.
 Explicit `+V` options or `SKN_PASS_VARS` entries, including `SKN_PATH_CHECK`,
 take precedence over these nested defaults.
 Unset or override these variables before invoking the inner `skn` to make the nested sandbox narrower.
+
+## Interactive commands and `with-tty`
+
+`with-tty` is an independent helper script shipped with Sandkasten.
+It is not an `skn` option;
+it is a command that is usually run inside an `skn` sandbox.
+Use it for interactive terminal programs that expect to open `/dev/tty` directly
+or need shell job control.
+
+Without it, symptoms can include errors such as:
+```text
+emacs: Could not open file: /dev/tty
+```
+or an interactive program such as `nano` or Pi suspending itself
+and leaving no usable sandboxed shell to return to.
+
+`with-tty` uses `tmux` internally to give the real command a usable terminal and job control,
+so `tmux` must be available inside the sandbox.
+The tmux session is private and disposable:
+it is not meant to be detached from and reattached to like a normal tmux session.
+Detach and suspend key bindings are disabled.
+
+`with-tty` exits automatically after a quiet successful command,
+but leaves an inspection shell when the command prints visible output, fails, or stops.
+Use `jobs` and `fg` there for stopped jobs,
+and `exit` to end the session.
+
+Run `with-tty` as the sandboxed command and use `+A` to prepend the real interactive command:
+```sh
+alias skn-nano='skn with-tty +A nano'
+skn-nano +W. README.md
+```
+
+Because `with-tty` and `tmux` run inside the sandbox,
+their executables must be visible there.
 
 ## Configuration
 

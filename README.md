@@ -98,17 +98,22 @@ The included [`skn-baseline-path-check`](skn-baseline-path-check) is a baseline 
 `skn` is a single-file Bash script.
 It requires the [`bwrap`](https://github.com/containers/bubblewrap) command.
 
-Install `skn` and the included baseline path checker in a directory on `PATH`:
+Install `skn`, the included baseline path checker,
+and the optional `with-tty` helper in a directory on `PATH`:
 ```sh
 mkdir -p ~/.local/bin
-install skn skn-baseline-path-check ~/.local/bin/
+install skn skn-baseline-path-check with-tty ~/.local/bin/
 ```
 Ensure `~/.local/bin` is on `PATH`, or use another install directory that is.
 
-Then add the path check to your shell startup file:
+Then add basic setup to your shell startup file:
 ```sh
 export SKN_PATH_CHECK=skn-baseline-path-check
+export SKN_RO_BINDS="$HOME/.local/bin"
 ```
+
+`SKN_RO_BINDS` makes installed helpers such as `with-tty` visible inside sandboxes.
+If you install them somewhere else, bind that directory instead.
 
 The included checker rejects broad or surprising path grants;
 use it unchanged if that policy fits, otherwise adapt or replace it.
@@ -117,7 +122,7 @@ See [Setup](USAGE.md#setup) and [Path checks](USAGE.md#path-checks).
 ## Documentation
 
 - [Using Sandkasten](USAGE.md): setup, full invocation syntax,
-  configuration, sandbox model, and threat model.
+  `with-tty` use, configuration, sandbox model, and threat model.
 - [Sandkasten recipes](EXAMPLES.md): practical Python, npm, Rust,
   and other workflows.
 
