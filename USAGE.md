@@ -2,6 +2,25 @@
 
 For worked command-line recipes, see [Sandkasten recipes](EXAMPLES.md).
 
+## Setup
+
+Normal execution requires `SKN_PATH_CHECK` to name a path-check command.
+If you decide to use the included baseline checker as shown in the [README](README.md#installation), set:
+```sh
+export SKN_PATH_CHECK=skn-baseline-path-check
+```
+
+Use `SKN_RO_BINDS` for directories that you consider part of the read-only base system,
+but which are not included in the default sandbox (review with `+S`).
+For example, after installing Sandkasten helpers in `~/.local/bin`, you likely want:
+```sh
+export SKN_RO_BINDS="$HOME/.local/bin"
+```
+For per-command project and data access, prefer `+R`, `+W`, or `+T`.
+
+See [Path checks](#path-checks) and
+[Additional read-only binds](#additional-read-only-binds) for details.
+
 ## Invoking `skn`
 
 ```sh
@@ -65,7 +84,7 @@ Run `skn` without arguments to output a usage message and exit.
 `skn` recognizes the following environment variables:
 
 - `SKN_PATH_CHECK` names the mandatory path-check command for normal execution.
-- `SKN_RO_BINDS` adds trusted additional read-only binds.
+- `SKN_RO_BINDS` adds configured additional read-only binds.
 - `SKN_PASS_VARS` names environment variables to pass when set.
 
 See [Configuration](#configuration) for details.
@@ -107,27 +126,35 @@ The most important setting is `SKN_PATH_CHECK`.
 ### Path checks
 
 For normal execution, `SKN_PATH_CHECK` must name a path-check command.
+There is deliberately no default:
+if it is missing or mistyped, `skn` fails rather than running without path checks.
+
 `skn` calls this command directly, without shell evaluation,
 with each `+R`, `+W`, or `+T` path as its only argument.
-A non-zero exit rejects the path and causes `skn` to abort with an error message.
+A non-zero exit rejects the path and causes `skn` to abort.
 
-The same check applies to read-only, writable, and transient-writable binds.
-The check is intended as a guard against user mistakes,
-such as running `skn command +W .` directly under `/home/user`.
-The caller still chooses the access mode:
-use `+W` only for paths where persistent writes are intended.
+Path checks are a pragmatic guardrail against user mistakes,
+like running `skn command +R.` while the current directory is `$HOME`.
+The explicit `+R`, `+W`, or `+T` options are still the user's access grants,
+so the baseline checker is intentionally conservative about false positives.
 
-An example checker is provided as [`example-path-check`](example-path-check).
-The example checker is intentionally permissive:
-it rejects obvious mistakes while staying out of the way for ordinary project, cache, and tool paths.
-It is a sample guardrail, not a definitive safety check.
-Adjust or replace it as needed.
-The checker is responsible for canonicalization, symlink handling, and any other policy requirements.
+The included [`skn-baseline-path-check`](skn-baseline-path-check)
+implements a baseline policy for typical personal use:
+it allows ordinary descendants of `$HOME` and `/tmp`,
+but rejects broad grants such as `$HOME` itself and paths whose written or
+symlink-resolved form is not readable by “other”.
+This typically rejects broad private grants such as `~/.ssh` itself,
+while still allowing explicitly named descendant paths that pass the final-path
+readability check, for example `~/.ssh/authorized_keys` when that file is
+world-readable.
+Use it unchanged if this policy fits; otherwise adapt or replace it.
 
-For testing, path checking can be disabled with
+For tests and throw-away experiments,
+you can explicitly select a checker that always succeeds:
 ```sh
 export SKN_PATH_CHECK=true
 ```
+Do not use that as your normal setup.
 
 ### Additional read-only binds
 
@@ -138,8 +165,8 @@ export SKN_RO_BINDS="$HOME/.rustup:$HOME/.cargo/bin"
 ```
 
 `SKN_RO_BINDS` entries must be absolute paths.
-They are trusted user configuration and are not checked by `SKN_PATH_CHECK`.
-Use this for stable setup, not per-command access grants;
+They come from user configuration and are not checked by `SKN_PATH_CHECK`.
+Use this for stable baseline visibility, not per-command access grants;
 use `+R` for those.
 
 ### Additional passed variables
@@ -184,14 +211,14 @@ In broad strokes:
 - The sandbox has its own UTS namespace and a neutral hostname (`skn`).
 - A small amount of system configuration is bound read-only when useful.
 - User/project files are not visible unless explicitly bound with `+R`, `+W`, `+T`,
-  or trusted configuration such as `SKN_RO_BINDS`.
+  or configured baseline binds such as `SKN_RO_BINDS`.
 - The synthetic sandbox filesystem is remounted read-only after setup.
 - Persistent writes are limited to explicit `+W` binds.
 - Non-persistent writes are limited to the private `/tmp` and explicit `+T` overlays.
 
 DNS resolver configuration and common TLS certificate locations are added only with `+N`.
 Host-specific name overrides such as `/etc/hosts` are not exposed automatically;
-bind trusted configuration explicitly if a command needs it.
+bind that configuration explicitly if a command needs it.
 
 The environment is mostly cleared by default.
 Use `+V`, `+E`, or `SKN_PASS_VARS` when environment access is needed.

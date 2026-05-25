@@ -40,8 +40,8 @@ To run `untrusted arg` with network access, use
 untrusted +N arg
 ```
 
-Normal execution requires a configured `SKN_PATH_CHECK`.
-This is explained further below.
+Normal execution requires a configured path check;
+see [Installation](#installation).
 
 ## Default sandbox
 
@@ -59,7 +59,7 @@ By default, the sandbox has
 `skn` is a Bash script.
 To try it out, run from the Sandkasten directory:
 ```sh
-export SKN_PATH_CHECK=./example-path-check
+export SKN_PATH_CHECK=./skn-baseline-path-check
 ./skn wc +R. -l README.md
 ./skn touch +R. README.md
 ```
@@ -88,20 +88,36 @@ To explore the sandbox interactively, replace the command with a shell:
 `SKN_PATH_CHECK` names a path-check command.
 `skn` calls it before accepting paths passed to `+R`, `+W`, or `+T`;
 this is a guardrail against accidentally exposing too much of the host filesystem.
-The included [`example-path-check`](example-path-check) is meant as a starting point.
+There is deliberately no built-in default:
+if the variable is missing or mistyped,
+`skn` fails instead of silently running without this guardrail.
+The included [`skn-baseline-path-check`](skn-baseline-path-check) is a baseline checker for typical personal use.
 
 ## Installation
+
 `skn` is a single-file Bash script.
-To install it, copy or link it into any directory on `PATH`, for example:
+It requires the [`bwrap`](https://github.com/containers/bubblewrap) command.
+
+Install `skn` and the included baseline path checker in a directory on `PATH`:
 ```sh
 mkdir -p ~/.local/bin
-install skn ~/.local/bin
+install skn skn-baseline-path-check ~/.local/bin/
 ```
+Ensure `~/.local/bin` is on `PATH`, or use another install directory that is.
+
+Then add the path check to your shell startup file:
+```sh
+export SKN_PATH_CHECK=skn-baseline-path-check
+```
+
+The included checker rejects broad or surprising path grants;
+use it unchanged if that policy fits, otherwise adapt or replace it.
+See [Setup](USAGE.md#setup) and [Path checks](USAGE.md#path-checks).
 
 ## Documentation
 
-- [Using Sandkasten](USAGE.md): full invocation syntax, configuration,
-  sandbox model, and threat model.
+- [Using Sandkasten](USAGE.md): setup, full invocation syntax,
+  configuration, sandbox model, and threat model.
 - [Sandkasten recipes](EXAMPLES.md): practical Python, npm, Rust,
   and other workflows.
 

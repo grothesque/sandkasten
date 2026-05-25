@@ -73,7 +73,7 @@ The corresponding real tools must be either in `PATH`
 or set explicitly using `SKN_REAL_CARGO` and `SKN_REAL_RUST_ANALYZER`.
 
 Normal execution inherits `skn`’s path-check requirement;
-see the usage guide’s [path-check section](../USAGE.md#path-checks).
+see the usage guide’s [setup section](../USAGE.md#setup).
 
 ### Simple setup
 

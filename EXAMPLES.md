@@ -1,7 +1,7 @@
 # Sandkasten recipes
 
 These examples assume that [`skn` is installed](README.md#installation)
-and that [`SKN_PATH_CHECK` is configured](USAGE.md#path-checks).
+and that [`SKN_PATH_CHECK` is configured](USAGE.md#setup).
 Use `+S` first to inspect the sandbox plan without running the command.
 To explore a sandbox interactively before running a command,
 copy the equivalent `skn` invocation shown by `+S`,

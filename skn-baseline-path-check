@@ -1,9 +1,10 @@
 #!/bin/bash
-# Example SKN_PATH_CHECK command for skn.
+# Baseline SKN_PATH_CHECK command for skn.
 #
-# This is a sample guardrail, not a definitive safety check. It rejects broad
+# This is a baseline guardrail, not a definitive safety check. It rejects broad
 # or surprising path grants while allowing ordinary descendants of $HOME and
-# /tmp that are readable by “other”. Adjust or replace it for your own policy.
+# /tmp that are readable by “other”. Use it unchanged if this policy fits;
+# otherwise adjust or replace it.
 
 set -euo pipefail
 
