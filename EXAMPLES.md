@@ -89,6 +89,117 @@ To apply fixes persistently, grant writable project access explicitly:
 biome +W. check --write .
 ```
 
+## Running an interactive npm-installed coding harness
+
+Use [`with-tty`](USAGE.md#interactive-commands-and-with-tty) for full-screen tools
+or other interactive commands that need `/dev/tty` or shell job control.
+Suppose an npm-installed coding harness provides `~/.npm-global/bin/harness`
+and stores its state in `~/.harness`.
+
+Install or update it using the `skn-npm` setup above:
+```sh
+mkdir -p ~/.harness
+skn-npm +N install -g harness
+```
+
+Define a launcher that gives the harness a TTY, network access,
+read-only access to its installation prefix,
+and writable access to its own state directory:
+```sh
+alias harness='skn with-tty +A ~/.npm-global/bin/harness +N +R ~/.npm-global +W ~/.harness'
+```
+
+Run it on a project by granting project access for that invocation:
+```sh
+harness +W.
+```
+
+For a disposable trial run, make the project transient-writable instead:
+```sh
+harness +T.
+```
+
+This keeps the rest of the home directory hidden,
+but `~/.harness` may contain API tokens or other secrets.
+Because `+N` is part of the launcher,
+those secrets are deliberately exposed to a networked command.
+
+`with-tty`, `tmux`, and the harness’s Node runtime must be visible inside the sandbox.
+If any of them are installed outside the default system paths,
+bind their install directories read-only, for example with `SKN_RO_BINDS` or `+R`.
+
+## Systematically sandbox Node and npm
+
+If you do not want npm packages, install scripts, project scripts,
+or npm-installed CLIs to inherit ordinary home-directory access,
+expose Node and npm through shell functions.
+This makes sandboxing the default for commands launched through those functions,
+while largely preserving usability.
+
+For a Node installation under `$HOME/opt/node` and a user npm prefix:
+```sh
+node_home="$HOME/opt/node"
+export NPM_CONFIG_PREFIX="$HOME/.npm-global"
+mkdir -p ~/.npm "$NPM_CONFIG_PREFIX"
+
+node() {
+    skn "$node_home/bin/node" \
+        +R "$node_home" \
+        +V "PATH=$node_home/bin:$PATH" \
+        "$@"
+}
+
+npm() {
+    skn "$node_home/bin/npm" \
+        +R "$node_home" \
+        +V "PATH=$node_home/bin:$PATH" \
+        +V NPM_CONFIG_PREFIX \
+        +W ~/.npm \
+        "$@"
+}
+
+npm-admin() {
+    npm +W "$NPM_CONFIG_PREFIX" "$@"
+}
+```
+
+The ordinary `npm` function can write npm’s cache,
+but it cannot write global packages or project files unless an invocation grants that access.
+Install or update a global tool with network access and a writable npm prefix:
+```sh
+npm-admin +N install -g @biomejs/biome
+```
+
+Run project commands by granting project access explicitly:
+```sh
+npm +N +W. install
+npm +W. test
+npm +T. run build
+```
+
+Keep globally installed npm tools out of the host `PATH`;
+expose them through launchers that also expose the Node runtime:
+```sh
+biome() {
+    skn "$NPM_CONFIG_PREFIX/bin/biome" \
+        +R "$node_home" \
+        +R "$NPM_CONFIG_PREFIX" \
+        +V "PATH=$node_home/bin:$PATH" \
+        "$@"
+}
+```
+
+Then grant project access per use:
+```sh
+biome +R. check .
+biome +W. check --write .
+```
+
+If Node/npm come from the system package manager under `/usr`,
+the explicit `node_home` bind is usually unnecessary because `/usr` is already visible.
+For `nvm`, `fnm`, `asdf`, `mise`, or Volta setups,
+bind the relevant installed Node version and pass a `PATH` that points at its `bin` directory.
+
 ## Rust/Cargo sandboxing
 
 For a typical rustup-based setup, manual Cargo invocations under `skn` may look as follows:
