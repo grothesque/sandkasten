@@ -1,9 +1,10 @@
-# Sandkasten: quick-and-proper Bubblewrap sandboxes
+# Sandkasten: low-friction, inspectable per-command sandboxes
 
-Sandkasten (`skn`) is a shell-oriented frontend to
-[bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`).
-It runs commands in a restricted sandbox, built on Linux namespaces and bind mounts,
+Sandkasten (`skn`) runs shell commands in a restricted sandbox
+(built on Linux namespaces and bind mounts)
 that can be selectively relaxed.
+It is a frontend to [bubblewrap](https://github.com/containers/bubblewrap),
+but unlike `bwrap`, the `skn` interface is optimized for interactive shell use.
 
 A primary use case is defense in depth against supply-chain attacks:
 running project tools, build scripts, tests, language servers, coding agents,
@@ -11,35 +12,36 @@ and package-ecosystem tools with only the filesystem, environment, and network a
 
 For example:
 ```sh
-mkdir -p artifacts
-skn untrusted +R. +W artifacts -o artifacts/result
+mkdir -p build
+skn make +T. +W build
 ```
 
-This invocation runs `untrusted` with
+This runs `make` with
 
-- read-only access to the current directory (in addition to essential system mounts such as `/usr`),
-- write access to `artifacts`,
-- no network access.
-
-Normal execution requires a configured `SKN_PATH_CHECK`; this is explained further below.
+- the default sandbox (see next section),
+- persistent write access to the `build` directory,
+- temporary overlay access to the current directory: `make` can modify/delete files there,
+  but incidental build by-products outside `build` are only visible to `make` itself
+  and disappear when it finishes.
 
 `skn` options start with `+`, making them easy to mix with the wrapped command’s own arguments.
-In the example above, `+R.` and `+W artifacts` are handled by `skn`, while `-o artifacts/result` is passed to `untrusted`.
+In the example above, `+T.` and `+W build` are handled by `skn`;
+any later make targets or options would be passed to `make`.
 
 This convention works well for aliases and wrappers:
 ```sh
-alias untrusted='skn /not/in/path/untrusted'
+alias untrusted='skn /usr/local/bin/untrusted'
 ```
 
-The alias remains usable like the original command,
+Such an alias remains usable like the original command,
 while sandbox controls can still be added when needed.
 To run `untrusted arg` with network access, use
 ```sh
 untrusted +N arg
 ```
 
-`+S` prints the sandbox plan, including the `bwrap` command that would be run,
-allowing sandbox inspection before use.
+Normal execution requires a configured `SKN_PATH_CHECK`.
+This is explained further below.
 
 ## Default sandbox
 
@@ -52,6 +54,57 @@ By default, the sandbox has
 - only minimal read-only access to host system/runtime files,
 - no access to the rest of the host filesystem unless explicitly configured.
 
+## Try it without installing
+
+`skn` is a Bash script.
+To try it out, run from the Sandkasten directory:
+```sh
+export SKN_PATH_CHECK=./example-path-check
+./skn wc +R. -l README.md
+./skn touch +R. README.md
+```
+For the above to work,
+the [`bwrap`](https://github.com/containers/bubblewrap) command must be available.
+
+Note that the first argument must be the command to be run,
+optionally followed by skn options and then command arguments.
+Here, `wc` and `touch` are the commands,
+`+R.` is an skn option,
+and `-l README.md` or `README.md` are command arguments.
+
+Running `wc -l README.md` will succeed,
+but `touch README.md` will fail because the current directory was bound read-only with `+R.`.
+If that was changed to `+W.`, touch would succeed as well.
+
+To inspect the sandbox, add `+S`.
+This prints the sandbox plan, including the `bwrap` command that would be run,
+allowing sandbox inspection before use.
+
+To explore the sandbox interactively, replace the command with a shell:
+```sh
+./skn bash +R.
+```
+
+`SKN_PATH_CHECK` names a path-check command.
+`skn` calls it before accepting paths passed to `+R`, `+W`, or `+T`;
+this is a guardrail against accidentally exposing too much of the host filesystem.
+The included [`example-path-check`](example-path-check) is meant as a starting point.
+
+## Installation
+`skn` is a single-file Bash script.
+To install it, copy or link it into any directory on `PATH`, for example:
+```sh
+mkdir -p ~/.local/bin
+install skn ~/.local/bin
+```
+
+## Documentation
+
+- [Using Sandkasten](USAGE.md): full invocation syntax, configuration,
+  sandbox model, and threat model.
+- [Sandkasten recipes](EXAMPLES.md): practical Python, npm, Rust,
+  and other workflows.
+
 ## Companion tools and workflows
 
 This project includes `skn`-based wrappers for the Rust development tools
@@ -60,39 +113,19 @@ This project includes `skn`-based wrappers for the Rust development tools
 They support a cautious workflow: fetch dependencies with network access,
 then build and analyze offline; see the [Rust wrappers README](rust/README.md).
 
-Sandkasten is also the recommended outer sandbox for [Sandburg](https://github.com/grothesque/sandburg),
+Sandkasten can also serve as an outer sandbox for coding-agent harnesses.
+For example, it is the recommended outer sandbox for
+[Sandburg](https://github.com/grothesque/sandburg),
 an extension for [Pi](https://pi.dev/), an LLM coding-agent harness.
-Sandburg constrains the agent’s built-in tools, while Sandkasten constrains the agent process itself.
+Sandburg constrains the agent’s built-in tools,
+while Sandkasten constrains the harness process itself.
 Together, they provide a defense-in-depth setup for coding-agent use.
 
-## Installation
+## Security note
 
-`skn` is a simple Bash script.
-Besides [bubblewrap](https://github.com/containers/bubblewrap),
-it requires only common Unix tools such as `realpath` and `dirname`.
-The optional `with-tty` helper is also a Bash script and requires `tmux`.
-
-Install `skn`, and optionally `with-tty`, in any directory on `PATH`.
-For example:
-```sh
-mkdir -p ~/.local/bin
-install skn with-tty ~/.local/bin
-```
-
-Copying is simplest; symlinking from a checkout is also fine.
-If needed, add the install directory to `PATH` in a shell startup file.
-
-`skn` and `with-tty` can also be run directly from a checkout.
-
-The Rust wrappers have their own requirements and installation notes;
-see the [Rust wrappers README](rust/README.md).
-
-## First run
-
-To explore the default sandbox with the shipped example path checker, start a shell:
-```sh
-SKN_PATH_CHECK=./example-path-check ./skn bash +R.
-```
-
-The current directory is visible read-only because of `+R.`,
-`/tmp` is private and writable, and network access is disabled.
+Sandkasten is a pragmatic containment layer,
+not a complete security solution.
+It relies on the kernel and bubblewrap;
+read-only binds still expose data for reading;
+and network access can exfiltrate exposed data.
+See the full [threat model and non-goals](USAGE.md#threat-model-and-non-goals).
