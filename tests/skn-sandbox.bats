@@ -28,6 +28,26 @@ load 'helpers/common'
     assert_output_contains "SKN_PATH_CHECK rejected $dir2 (+W option)"
 }
 
+@test 'SKN_RO_BINDS ignores missing paths' {
+    require_working_skn
+
+    missing="$BATS_TEST_TMPDIR/missing-ro-bind"
+
+    run env SKN_PATH_CHECK=true SKN_RO_BINDS="$missing" "$SKN" echo hello
+    assert_success
+    assert_output_contains hello
+}
+
+@test 'explicit bind options reject missing paths' {
+    for option in +R +W +T; do
+        missing="$BATS_TEST_TMPDIR/missing-${option#+}"
+
+        run env SKN_PATH_CHECK=true "$SKN" true "$option" "$missing"
+        assert_status 2
+        assert_output_contains "invalid path for $option"
+    done
+}
+
 @test 'launch cwd is not implicitly exposed' {
     require_working_skn
 

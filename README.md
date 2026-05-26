@@ -114,6 +114,7 @@ export SKN_RO_BINDS="$HOME/.local/bin"
 
 `SKN_RO_BINDS` makes installed helpers such as `with-tty` visible inside sandboxes.
 If you install them somewhere else, bind that directory instead.
+Missing `SKN_RO_BINDS` entries are ignored.
 
 The included checker rejects broad or surprising path grants;
 use it unchanged if that policy fits, otherwise adapt or replace it.

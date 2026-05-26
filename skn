@@ -52,7 +52,7 @@ Environment:
   SKN_PATH_CHECK  mandatory unless +S or +0 is used; command used to validate
                   paths from +R/+W/+T; executed directly with the path as its
                   only argument. Set to 'true' to disable.
-  SKN_RO_BINDS    colon-separated absolute paths to bind read-only
+  SKN_RO_BINDS    colon-separated absolute paths to bind read-only when present
   SKN_PASS_VARS   colon-separated variable names to pass when set
 
 Nested skn invocations are supported: skn sets SKN_PATH_CHECK=true inside the
@@ -242,25 +242,29 @@ check_path() {
 queue_bind() {
     local option=$1
     local path=$2
-    local needs_check=${3:-0}
 
     [[ -n $path ]] || error "empty path for $option"
 
-    bind_queue+=("$option" "$path" "$needs_check")
+    bind_queue+=("$option" "$path")
+}
+
+add_env_ro_bind() {
+    local path=$1
+    local abs_path
+
+    abs_path=$(realpath -s -m -- "$path") || error "could not normalize SKN_RO_BINDS entry: $path"
+    add_ro_bind_try "$abs_path"
 }
 
 add_bind() {
     local option=$1
     local path=$2
-    local needs_check=$3
     local abs_path realpath_args
 
     if ((show_mode)); then
         realpath_args=(-s -m)
     else
-        if [[ $needs_check == 1 ]]; then
-            check_path "$option option" "$path"
-        fi
+        check_path "$option option" "$path"
         realpath_args=(-s -e)
     fi
 
@@ -281,12 +285,16 @@ add_bind() {
 }
 
 add_queued_binds() {
-    local i
+    local i path
 
     path_check_failed=0
 
-    for ((i = 0; i < ${#bind_queue[@]}; i += 3)); do
-        add_bind "${bind_queue[i]}" "${bind_queue[i + 1]}" "${bind_queue[i + 2]}"
+    for path in "${env_ro_bind_queue[@]}"; do
+        add_env_ro_bind "$path"
+    done
+
+    for ((i = 0; i < ${#bind_queue[@]}; i += 2)); do
+        add_bind "${bind_queue[i]}" "${bind_queue[i + 1]}"
     done
 
     if ((path_check_failed)); then
@@ -301,7 +309,7 @@ queue_env_ro_bind() {
     [[ -n $path ]] || error "empty path in SKN_RO_BINDS"
     [[ $path == /* ]] || error "SKN_RO_BINDS entries must be absolute paths: $path"
 
-    queue_bind +R "$path" 0
+    env_ro_bind_queue+=("$path")
 }
 
 queue_colon_list() {
@@ -449,6 +457,7 @@ machine_mode=0
 command_args=()
 skn_option_args=()
 env_queue=()
+env_ro_bind_queue=()
 bind_queue=()
 bwrap_args=()
 bwrap_display_lines=()
@@ -538,7 +547,7 @@ while (($#)); do
             ;;
     esac
 
-    queue_bind "$option" "$path" 1
+    queue_bind "$option" "$path"
     skn_option_args+=("$option" "$path")
 done
 

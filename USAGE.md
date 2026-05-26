@@ -200,13 +200,14 @@ Do not use that as your normal setup.
 
 ### Additional read-only binds
 
-Set `SKN_RO_BINDS` to a colon-separated list of absolute paths to bind read-only.
+Set `SKN_RO_BINDS` to a colon-separated list of absolute paths to bind read-only when present.
 For example:
 ```sh
 export SKN_RO_BINDS="$HOME/.rustup:$HOME/.cargo/bin"
 ```
 
 `SKN_RO_BINDS` entries must be absolute paths.
+Missing entries are ignored.
 They come from user configuration and are not checked by `SKN_PATH_CHECK`.
 Use this for stable baseline visibility, not per-command access grants;
 use `+R` for those.

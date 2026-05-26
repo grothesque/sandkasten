@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- Treat `SKN_RO_BINDS` entries as optional read-only binds; missing entries are now ignored.
+
 ## [0.2.0] - 2026-05-26
 
 ### Changed

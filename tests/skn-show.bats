@@ -191,13 +191,15 @@ EOF
     assert_output_contains 'build'
 }
 
-@test '+S accepts absolute SKN_RO_BINDS entries' {
+@test '+S shows SKN_RO_BINDS entries as optional read-only binds' {
     dir="$BATS_TEST_TMPDIR/ro-bind"
+    missing="$BATS_TEST_TMPDIR/missing-ro-bind"
 
-    run env -u SKN_PATH_CHECK SKN_RO_BINDS="$dir" "$SKN" true +S
+    run env -u SKN_PATH_CHECK SKN_RO_BINDS="$dir:$missing" "$SKN" true +S
 
     assert_success
-    assert_output_contains "--ro-bind $dir $dir"
+    assert_output_contains "--ro-bind-try $dir $dir"
+    assert_output_contains "--ro-bind-try $missing $missing"
 }
 
 @test 'SKN_RO_BINDS rejects relative paths' {
