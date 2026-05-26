@@ -128,7 +128,7 @@ those secrets are deliberately exposed to a networked command.
 If any of them are installed outside the default system paths,
 bind their install directories read-only, for example with `SKN_RO_BINDS` or `+R`.
 
-## Systematically sandbox Node and npm
+## Systematically sandboxing Node and npm
 
 If you do not want npm packages, install scripts, project scripts,
 or npm-installed CLIs to inherit ordinary home-directory access,
