@@ -79,37 +79,26 @@ quote_shell_words() {
     printf '%s' "$out"
 }
 
-print_shell_words() {
-    local indent=$1
-    local suffix=$2
-    shift 2
-
-    printf '%s%s%s\n' "$indent" "$(quote_shell_words "$@")" "$suffix"
-}
-
+# Keep display lines alongside the argv: bwrap_args is flat, but +S output is
+# easier to inspect when each logical bwrap operation stays grouped as it was
+# added here.
 add_bwrap_args() {
     bwrap_args+=("$@")
     bwrap_display_lines+=("$(quote_shell_words "$@")")
-}
-
-add_ro_bind_try() {
-    local path=$1
-
-    add_bwrap_args --ro-bind-try "$path" "$path"
 }
 
 print_bwrap_command() {
     local continuation line
 
     printf -v continuation " %b" "\\\\"
-    print_shell_words '  ' "$continuation" bwrap
+    printf '  %s%s\n' "$(quote_shell_words bwrap)" "$continuation"
 
     for line in "${bwrap_display_lines[@]}"; do
         printf '    %s%s\n' "$line" "$continuation"
     done
 
-    print_shell_words '    ' "$continuation" --
-    print_shell_words '    ' '' "$@"
+    printf '    %s%s\n' "$(quote_shell_words --)" "$continuation"
+    printf '    %s\n' "$(quote_shell_words "$@")"
 }
 
 valid_env_name() {
@@ -148,14 +137,13 @@ lookup_original_env() {
     return 1
 }
 
-read_original_env_command() {
+add_original_env() {
     local entry
 
-    exec_cmd=(env -i)
+    exec_cmd+=(env -i)
     while IFS= read -r -d '' entry; do
         exec_cmd+=("$entry")
     done </proc/$$/environ
-    exec_cmd+=(bwrap)
 }
 
 queue_env_spec() {
@@ -229,31 +217,11 @@ add_nested_skn_env() {
     fi
 }
 
-check_path() {
-    local label=$1
-    local path=$2
-
-    if ! "$SKN_PATH_CHECK" "$path"; then
-        echo "$progname: SKN_PATH_CHECK rejected $path ($label) for sharing with sandbox" >&2
-        path_check_failed=1
-    fi
-}
-
-queue_bind() {
-    local option=$1
-    local path=$2
-
-    [[ -n $path ]] || error "empty path for $option"
-
-    bind_queue+=("$option" "$path")
-}
-
-add_env_ro_bind() {
+add_ro_bind_try() {
     local path=$1
-    local abs_path
 
-    abs_path=$(realpath -s -m -- "$path") || error "could not normalize SKN_RO_BINDS entry: $path"
-    add_ro_bind_try "$abs_path"
+    path=$(realpath -s -m -- "$path") || error "could not normalize read-only bind path: $path"
+    add_bwrap_args --ro-bind-try "$path" "$path"
 }
 
 add_bind() {
@@ -264,7 +232,10 @@ add_bind() {
     if ((show_mode)); then
         realpath_args=(-s -m)
     else
-        check_path "$option option" "$path"
+        if ! "$SKN_PATH_CHECK" "$path"; then
+            echo "$progname: SKN_PATH_CHECK rejected $path ($option option) for sharing with sandbox" >&2
+            path_check_failed=1
+        fi
         realpath_args=(-s -e)
     fi
 
@@ -290,7 +261,7 @@ add_queued_binds() {
     path_check_failed=0
 
     for path in "${env_ro_bind_queue[@]}"; do
-        add_env_ro_bind "$path"
+        add_ro_bind_try "$path"
     done
 
     for ((i = 0; i < ${#bind_queue[@]}; i += 2)); do
@@ -328,11 +299,6 @@ queue_colon_list() {
     "$callback" "$value"
 }
 
-queue_env_ro_binds() {
-    [[ -v SKN_RO_BINDS ]] || return 0
-    queue_colon_list "$SKN_RO_BINDS" queue_env_ro_bind
-}
-
 queue_pass_var_name() {
     local name=$1
 
@@ -342,14 +308,7 @@ queue_pass_var_name() {
     env_queue+=(pass "$name" '')
 }
 
-queue_pass_vars() {
-    [[ -v SKN_PASS_VARS ]] || return 0
-    queue_colon_list "$SKN_PASS_VARS" queue_pass_var_name
-}
-
 add_base_bwrap_setup() {
-    local path
-
     add_bwrap_args --unshare-all
     add_bwrap_args --hostname skn
     add_bwrap_args --new-session
@@ -465,8 +424,8 @@ env_loaded=0
 declare -A env_present=()
 declare -A env_values=()
 
-queue_env_ro_binds
-queue_pass_vars
+[[ -v SKN_RO_BINDS ]] && queue_colon_list "$SKN_RO_BINDS" queue_env_ro_bind
+[[ -v SKN_PASS_VARS ]] && queue_colon_list "$SKN_PASS_VARS" queue_pass_var_name
 
 # Parse wrapper options. The remaining arguments are for the command.
 #
@@ -547,7 +506,8 @@ while (($#)); do
             ;;
     esac
 
-    queue_bind "$option" "$path"
+    [[ -n $path ]] || error "empty path for $option"
+    bind_queue+=("$option" "$path")
     skn_option_args+=("$option" "$path")
 done
 
@@ -594,11 +554,11 @@ if ((show_mode)); then
     exit 0
 fi
 
+exec_cmd=()
 if ((preserve_env)); then
-    read_original_env_command
-else
-    exec_cmd=(bwrap)
+    add_original_env
 fi
+exec_cmd+=(bwrap)
 
 exec "${exec_cmd[@]}" \
     "${bwrap_args[@]}" \
