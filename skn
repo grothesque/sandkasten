@@ -368,24 +368,12 @@ print_info_header() {
 print_machine_info() {
     local argc
 
-    argc=$((1 + ${#command_args[@]} + $#))
+    argc=$((1 + ${#machine_skn_args[@]} + 1 + ${#command_args[@]} + $#))
 
-    printf 'format: skn-info-mk1\n'
-    if ((network)); then
-        printf 'network: enabled\n'
-    else
-        printf 'network: disabled\n'
-    fi
-
-    if ((preserve_env)); then
-        printf 'environment: preserved\n'
-    else
-        printf 'environment: cleared\n'
-    fi
-
+    printf 'format: skn-info-mk2\n'
     printf 'argc: %d\n' "$argc"
     printf '\n'
-    printf '%s\0' "$cmd" "${command_args[@]}" "$@"
+    printf '%s\0' "$cmd" "${machine_skn_args[@]}" ++ "${command_args[@]}" "$@"
 }
 
 if (($# == 0)); then
@@ -418,6 +406,7 @@ skn_option_args=()
 env_queue=()
 env_ro_bind_queue=()
 bind_queue=()
+machine_skn_args=()
 bwrap_args=()
 bwrap_display_lines=()
 env_loaded=0
@@ -442,17 +431,20 @@ while (($#)); do
         +N)
             network=1
             skn_option_args+=(+N)
+            machine_skn_args+=(+N)
             shift
             continue
             ;;
         +E)
             preserve_env=1
             skn_option_args+=(+E)
+            machine_skn_args+=(+E)
             shift
             continue
             ;;
         +S)
             show_mode=1
+            machine_skn_args+=(+S)
             shift
             continue
             ;;
@@ -476,6 +468,7 @@ while (($#)); do
             (($# >= 2)) || error "missing argument for +V"
             queue_env_spec "$2"
             skn_option_args+=(+V "$2")
+            machine_skn_args+=("+V$2")
             shift 2
             continue
             ;;
@@ -483,6 +476,7 @@ while (($#)); do
             env_spec=${1:2}
             queue_env_spec "$env_spec"
             skn_option_args+=(+V "$env_spec")
+            machine_skn_args+=("+V$env_spec")
             shift
             continue
             ;;
@@ -509,6 +503,7 @@ while (($#)); do
     [[ -n $path ]] || error "empty path for $option"
     bind_queue+=("$option" "$path")
     skn_option_args+=("$option" "$path")
+    machine_skn_args+=("$option$path")
 done
 
 if ((machine_mode)); then

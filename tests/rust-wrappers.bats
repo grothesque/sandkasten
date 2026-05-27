@@ -314,6 +314,31 @@ read_final_args() {
     assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
 }
 
+@test 'skn-cargo rejects ambiguous CARGO_NET_OFFLINE passed through skn +V' {
+    run "$SKN_CARGO" +V CARGO_NET_OFFLINE=true build
+    assert_status 2
+    assert_output_contains 'do not pass CARGO_NET_OFFLINE through skn +V'
+    [[ -e $FAKE_SKN_INFO_ARGS ]]
+    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+
+    rm -f "$FAKE_SKN_INFO_ARGS"
+    run "$SKN_CARGO" +VCARGO_NET_OFFLINE build
+    assert_status 2
+    assert_output_contains 'do not pass CARGO_NET_OFFLINE through skn +V'
+    [[ -e $FAKE_SKN_INFO_ARGS ]]
+    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+}
+
+@test 'skn-cargo still allows unrelated environment through skn +V' {
+    run "$SKN_CARGO" +V RUSTFLAGS=-Dwarnings build
+    assert_success
+
+    args="$BATS_TEST_TMPDIR/final-v-rustflags.lines"
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+    assert_args_contain_pair "$args" '+V' 'RUSTFLAGS=-Dwarnings'
+    assert_args_contain_pair "$args" '+V' 'CARGO_NET_OFFLINE=true'
+}
+
 @test 'skn-cargo allows explicit network for neutral subcommands but keeps them offline by default' {
     run "$SKN_CARGO" upgrade
     assert_success

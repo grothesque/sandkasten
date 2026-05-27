@@ -66,13 +66,15 @@ load 'helpers/common'
     run bash -c 'env -u SKN_PATH_CHECK "$1" true +0 +R ./missing-ro +W ./missing-w +T ./missing-t | tr "\0" "\n"' _ "$SKN"
 
     assert_success
-    assert_output_contains 'skn-info-mk1'
-    assert_output_contains 'network'
-    assert_output_contains 'disabled'
-    assert_output_contains 'environment'
-    assert_output_contains 'cleared'
-    assert_output_contains 'argc: 1'
+    assert_output_contains 'skn-info-mk2'
+    assert_output_contains 'argc: 5'
+    assert_output_contains '+R./missing-ro'
+    assert_output_contains '+W./missing-w'
+    assert_output_contains '+T./missing-t'
+    assert_output_contains '++'
     assert_output_contains 'true'
+    assert_output_not_contains 'network:'
+    assert_output_not_contains 'environment:'
     assert_output_not_contains 'skn: resulting bwrap invocation:'
 }
 
@@ -80,10 +82,52 @@ load 'helpers/common'
     run bash -c 'env -u SKN_PATH_CHECK "$1" true +0 +S +R ./missing-ro | tr "\0" "\n"' _ "$SKN"
 
     assert_success
-    assert_output_contains 'skn-info-mk1'
-    assert_output_contains 'argc: 1'
+    assert_output_contains 'skn-info-mk2'
+    assert_output_contains 'argc: 4'
+    assert_output_contains '+S'
+    assert_output_contains '+R./missing-ro'
+    assert_output_contains '++'
     assert_output_contains 'true'
     assert_output_not_contains 'skn: resulting bwrap invocation:'
+}
+
+@test '+0 emits a directly replayable equivalent invocation' {
+    run bash -s "$SKN" <<'EOF'
+set -euo pipefail
+
+skn=$1
+expected=(cmd +E +N '+VFOO=bar' '+R./space path' ++ prep run)
+format=
+argc=
+header_done=0
+
+exec {info_fd}< <(
+    env -u SKN_PATH_CHECK "$skn" cmd +0 +E +N +V FOO=bar +R './space path' +A prep run
+)
+
+while IFS= read -r -u "$info_fd" line; do
+    [[ -n $line ]] || { header_done=1; break; }
+    case $line in
+        'format: '*) format=${line#'format: '} ;;
+        'argc: '*) argc=${line#'argc: '} ;;
+    esac
+done
+
+((header_done))
+[[ $format == skn-info-mk2 ]]
+[[ $argc == "${#expected[@]}" ]]
+
+actual=()
+for ((i = 0; i < 10#$argc; ++i)); do
+    IFS= read -r -d '' -u "$info_fd" arg
+    actual+=("$arg")
+done
+
+for ((i = 0; i < ${#expected[@]}; ++i)); do
+    [[ ${actual[i]} == "${expected[i]}" ]]
+done
+EOF
+    assert_success
 }
 
 @test '+0 preserves parsed argv exactly' {
@@ -102,7 +146,6 @@ expected=(
 )
 
 format=
-network=
 argc=
 header_done=0
 
@@ -118,25 +161,27 @@ while IFS= read -r -u "$info_fd" line; do
     [[ -n $line ]] || { header_done=1; break; }
     case $line in
         'format: '*) format=${line#'format: '} ;;
-        'network: '*) network=${line#'network: '} ;;
         'argc: '*) argc=${line#'argc: '} ;;
     esac
 done
 
 ((header_done))
-[[ $format == skn-info-mk1 ]]
-[[ $network == disabled ]]
-[[ $argc == "${#expected[@]}" ]]
+[[ $format == skn-info-mk2 ]]
+[[ $argc == $((${#expected[@]} + 1)) ]]
 
 actual=()
-for ((i = 0; i < 10#$argc; ++i)); do
+IFS= read -r -d '' -u "$info_fd" arg
+[[ $arg == cmd ]]
+IFS= read -r -d '' -u "$info_fd" arg
+[[ $arg == ++ ]]
+for ((i = 2; i < 10#$argc; ++i)); do
     IFS= read -r -d '' -u "$info_fd" arg
     actual+=("$arg")
 done
 
-[[ ${#actual[@]} == ${#expected[@]} ]]
-for ((i = 0; i < ${#expected[@]}; ++i)); do
-    [[ ${actual[i]} == "${expected[i]}" ]]
+[[ ${#actual[@]} == $((${#expected[@]} - 1)) ]]
+for ((i = 1; i < ${#expected[@]}; ++i)); do
+    [[ ${actual[i - 1]} == "${expected[i]}" ]]
 done
 EOF
     assert_success

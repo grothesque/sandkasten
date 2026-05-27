@@ -77,18 +77,18 @@ locate_workspace_manifest() {
 # Parses skn’s +0 machine-readable info. This delegates option parsing to skn
 # itself instead of mirroring skn’s option grammar here.
 parse_skn_info() {
-    local argc arg format header_done=0 i line
-    local -a skn_command_argv=()
+    local argc arg delimiter_seen=0 format header_done=0 i line
+    local -a parsed_argv=()
 
-    skn_network_state=
+    skn_argv=()
     cargo_argv=()
+    explicit_network=0
 
     while IFS= read -r line; do
         [[ -n $line ]] || { header_done=1; break; }
 
         case $line in
             "format: "*) format=${line#"format: "} ;;
-            "network: "*) skn_network_state=${line#"network: "} ;;
             "argc: "*) argc=${line#"argc: "} ;;
             *": "*) ;;
             *) return 1 ;;
@@ -96,20 +96,28 @@ parse_skn_info() {
     done
 
     ((header_done)) || return 1
-    [[ ${format:-} == skn-info-mk1 ]] || return 1
-    case $skn_network_state in
-        enabled|disabled) ;;
-        *) return 1 ;;
-    esac
+    [[ ${format:-} == skn-info-mk2 ]] || return 1
     [[ ${argc:-} =~ ^[0-9]+$ ]] || return 1
-    ((10#$argc >= 1)) || return 1
+    ((10#$argc >= 2)) || return 1
 
     for ((i = 0; i < 10#$argc; ++i)); do
         IFS= read -r -d '' arg || return 1
-        skn_command_argv+=("$arg")
+        parsed_argv+=("$arg")
     done
 
-    cargo_argv=("${skn_command_argv[@]:1}")
+    for ((i = 1; i < 10#$argc; ++i)); do
+        arg=${parsed_argv[i]}
+        if [[ $arg == ++ ]]; then
+            delimiter_seen=1
+            cargo_argv=("${parsed_argv[@]:i + 1}")
+            break
+        fi
+
+        skn_argv+=("$arg")
+        [[ $arg == +N ]] && explicit_network=1
+    done
+
+    ((delimiter_seen)) || return 1
 }
 
 word_in() { [[ $2 == *" $1 "* ]]; }
@@ -273,64 +281,122 @@ cargo_install_likely_needs_network() {
     ((likely))
 }
 
+cargo_net_offline_env_spec() {
+    local spec=$1 name
+
+    name=${spec%%=*}
+    [[ $name == CARGO_NET_OFFLINE ]]
+}
+
+reject_skn_cargo_net_offline_env() {
+    echo "$progname: do not pass CARGO_NET_OFFLINE through skn +V" >&2
+    echo "$progname: use --offline/--frozen, or set CARGO_NET_OFFLINE before invoking $progname" >&2
+    exit 2
+}
+
+reject_ambiguous_skn_env_options() {
+    local skn_arg
+
+    for skn_arg in "${skn_argv[@]}"; do
+        case $skn_arg in
+            +V*) cargo_net_offline_env_spec "${skn_arg:2}" && reject_skn_cargo_net_offline_env ;;
+        esac
+    done
+
+    return 0
+}
+
+init_skn_args() {
+    skn_args=(
+        skn
+        "$real_cargo"
+        +E
+    )
+
+    if [[ -n ${SKN_REAL_CARGO:-} ]]; then
+        skn_args+=(+V "CARGO=$real_cargo")
+    fi
+}
+
+parse_wrapper_args() {
+    if ! parse_skn_info < <("${skn_args[@]}" +0 "$@"); then
+        echo "$progname: internal error parsing skn +0 output" >&2
+        exit 2
+    fi
+
+    reject_ambiguous_skn_env_options
+}
+
+apply_current_network_policy() {
+    if analyze_cargo_args "${cargo_argv[@]}"; then
+        if [[ $cargo_subcommand == install ]]; then
+            if ((explicit_network)) ||
+                cargo_install_likely_needs_network "${cargo_subcommand_args[@]}"; then
+                echo "$progname: cargo install downloads and builds in one step" >&2
+                echo "$progname: run real Cargo in a networked skn shell instead" >&2
+                exit 2
+            fi
+        fi
+
+        if [[ $net_auto_subcommands == *" $cargo_subcommand "* ]]; then
+            ((! explicit_network)) && skn_args+=(+N)
+        elif [[ -z $cargo_subcommand || $net_deny_subcommands == *" $cargo_subcommand "* ]]; then
+            if ((explicit_network)); then
+                echo "$progname: refusing +N: network is not allowed for this Cargo invocation" >&2
+                exit 2
+            fi
+            skn_args+=(+V CARGO_NET_OFFLINE=true)
+        elif ((! explicit_network)); then
+            skn_args+=(+V CARGO_NET_OFFLINE=true)
+        fi
+    elif ((explicit_network)); then
+        echo "$progname: refusing +N: cannot safely identify Cargo subcommand" >&2
+        exit 2
+    else
+        skn_args+=(+V CARGO_NET_OFFLINE=true)
+    fi
+
+    return 0
+}
+
+add_workspace_and_creation_binds() {
+    if find_cargo_creation_bind; then
+        skn_args+=(+W "$cargo_creation_bind")
+    fi
+
+    if locate_workspace_manifest "$cargo_cwd" "$cargo_has_cwd"; then
+        skn_args+=(+W "$(dirname -- "$workspace_manifest")")
+    fi
+
+    return 0
+}
+
+add_tool_home_binds() {
+    local cargo_home rustup_home
+
+    # If they exist, make cargo home writable and rustup home readable.
+    cargo_home=${CARGO_HOME:-${HOME:+$HOME/.cargo}}
+    [[ -n $cargo_home && -e $cargo_home ]] && skn_args+=(+W "$cargo_home")
+
+    rustup_home=${RUSTUP_HOME:-${HOME:+$HOME/.rustup}}
+    [[ -n $rustup_home && -e $rustup_home ]] && skn_args+=(+R "$rustup_home")
+
+    return 0
+}
+
+add_cargo_binds() {
+    add_workspace_and_creation_binds
+    add_tool_home_binds
+}
+
+run_cargo_once() {
+    exec "${skn_args[@]}" "$@"
+}
+
 real_cargo=${SKN_REAL_CARGO:-cargo}
 
-skn_args=(
-    skn
-    "$real_cargo"
-    +E
-)
-
-if [[ -n ${SKN_REAL_CARGO:-} ]]; then
-    skn_args+=(+V "CARGO=$real_cargo")
-fi
-
-if ! parse_skn_info < <("${skn_args[@]}" +0 "$@"); then
-    echo "$progname: internal error parsing skn +0 output" >&2
-    exit 2
-fi
-
-if analyze_cargo_args "${cargo_argv[@]}"; then
-    if [[ $cargo_subcommand == install ]]; then
-        if [[ $skn_network_state == enabled ]] ||
-            cargo_install_likely_needs_network "${cargo_subcommand_args[@]}"; then
-            echo "$progname: cargo install downloads and builds in one step" >&2
-            echo "$progname: run real Cargo in a networked skn shell instead" >&2
-            exit 2
-        fi
-    fi
-
-    if [[ $net_auto_subcommands == *" $cargo_subcommand "* ]]; then
-        [[ $skn_network_state == disabled ]] && skn_args+=(+N)
-    elif [[ -z $cargo_subcommand || $net_deny_subcommands == *" $cargo_subcommand "* ]]; then
-        if [[ $skn_network_state == enabled ]]; then
-            echo "$progname: refusing +N: network is not allowed for this Cargo invocation" >&2
-            exit 2
-        fi
-        skn_args+=(+V CARGO_NET_OFFLINE=true)
-    elif [[ $skn_network_state == disabled ]]; then
-        skn_args+=(+V CARGO_NET_OFFLINE=true)
-    fi
-elif [[ $skn_network_state == enabled ]]; then
-    echo "$progname: refusing +N: cannot safely identify Cargo subcommand" >&2
-    exit 2
-else
-    skn_args+=(+V CARGO_NET_OFFLINE=true)
-fi
-
-if find_cargo_creation_bind; then
-    skn_args+=(+W "$cargo_creation_bind")
-fi
-
-if locate_workspace_manifest "$cargo_cwd" "$cargo_has_cwd"; then
-    skn_args+=(+W "$(dirname -- "$workspace_manifest")")
-fi
-
-# If they exist, make cargo home writable and rustup home readable.
-cargo_home=${CARGO_HOME:-${HOME:+$HOME/.cargo}}
-[[ -n $cargo_home && -e $cargo_home ]] && skn_args+=(+W "$cargo_home")
-
-rustup_home=${RUSTUP_HOME:-${HOME:+$HOME/.rustup}}
-[[ -n $rustup_home && -e $rustup_home ]] && skn_args+=(+R "$rustup_home")
-
-exec "${skn_args[@]}" "$@"
+init_skn_args
+parse_wrapper_args "$@"
+apply_current_network_policy
+add_cargo_binds
+run_cargo_once "$@"

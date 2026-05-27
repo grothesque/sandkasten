@@ -6,6 +6,7 @@
   limit given tmux options to essentials;
   make detachment prevention more robust and less intrusive.
 - Treat `SKN_RO_BINDS` entries as optional read-only binds; missing entries are now ignored.
+- Change `skn +0` to emit a replayable `skn-info-mk2` argv format for wrappers.
 
 ## [0.2.0] - 2026-05-26
 
