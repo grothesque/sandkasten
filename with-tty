@@ -17,9 +17,9 @@ Usage: $progname COMMAND [COMMAND-args...]
 Run COMMAND with a usable controlling TTY.  COMMAND is started by an
 interactive shell inside a private tmux session: success with no visible output
 after the last Enter or Ctrl-D exits, as does success with a blank pane.
-Visible output, failure, or suspension leaves the shell for inspection.  tmux
-detach and suspend key bindings are disabled because detaching the only client
-exits the session.
+Visible output, failure, or suspension leaves the shell for inspection.  If
+the tmux client is detached, with-tty reattaches while the session still exists.
+The default tmux suspend key binding is disabled.
 EOF
 }
 
@@ -143,21 +143,33 @@ tmux_buffer=with-tty-last-input
 capture_last_input="capture-pane -b '$tmux_buffer' -S - -E - ; save-buffer -b '$tmux_buffer' '$pane_last_input' ; delete-buffer -b '$tmux_buffer'"
 
 tmux -S "$tmux_socket" \
-    set-option -g extended-keys on \; \
-    set-option -g extended-keys-format csi-u \; \
-    set-option -g allow-passthrough off \; \
-    set-option -g set-clipboard off \; \
     set-option -g status-left-length 20 \; \
-    set-option -g status-style 'fg=white,bg=colour240' \; \
-    unbind-key d \; \
-    unbind-key D \; \
-    unbind-key C-z \; \
+    set-option -g status-style 'fg=black,bg=colour248' \; \
     bind-key -n Enter "$capture_last_input ; send-keys Enter" \; \
     bind-key -n C-d "$capture_last_input ; send-keys C-d" \; \
-    bind-key d display-message 'with-tty: detach disabled; exit the shell to end the session' \; \
-    bind-key D display-message 'with-tty: detach disabled; exit the shell to end the session' \; \
-    bind-key C-z display-message 'with-tty: suspend disabled' \; \
+    bind-key C-z display-message -d 2000 'with-tty: suspend disabled' \; \
     new-session -s with-tty -- /bin/bash --rcfile "$rcfile" -i -s -- "$@"
 status=$?
+
+reattach_message='with-tty: reattached after detach; use exit to end the session'
+while tmux -S "$tmux_socket" has-session -t with-tty 2>/dev/null; do
+    (
+        # attach-session blocks the wrapper, so poll in the background until
+        # the new client exists and can receive the reattach message.
+        for ((poll_attempt = 0; poll_attempt < 10; poll_attempt++)); do
+            reattach_client=$(tmux -S "$tmux_socket" list-clients -t with-tty -F '#{client_tty}' 2>/dev/null | head -n 1)
+            if [[ -n $reattach_client ]]; then
+                tmux -S "$tmux_socket" display-message -d 2000 -c "$reattach_client" "$reattach_message" 2>/dev/null || true
+                exit 0
+            fi
+            sleep 0.1
+        done
+    ) &
+    reattach_message_pid=$!
+    tmux -S "$tmux_socket" attach-session -t with-tty
+    status=$?
+    wait "$reattach_message_pid" 2>/dev/null || true
+done
+
 set -e
 exit "$status"

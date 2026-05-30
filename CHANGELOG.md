@@ -4,6 +4,9 @@
 
 ### Changed
 
+- Improve compatibility of `with-tty` with arbitrary user `.tmux.conf`:
+  limit given tmux options to essentials;
+  make detachment prevention more robust and less intrusive.
 - Treat `SKN_RO_BINDS` entries as optional read-only binds; missing entries are now ignored.
 
 ## [0.2.0] - 2026-05-26

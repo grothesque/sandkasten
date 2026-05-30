@@ -143,7 +143,8 @@ and leaving no usable sandboxed shell to return to.
 so `tmux` must be available inside the sandbox.
 The tmux session is private and disposable:
 it is not meant to be detached from and reattached to like a normal tmux session.
-Detach and suspend key bindings are disabled.
+If the tmux client is detached, `with-tty` reattaches while the session still exists.
+The default tmux suspend key binding is disabled.
 
 `with-tty` exits automatically after a quiet successful command,
 but leaves an inspection shell when the command prints visible output, fails, or stops.
@@ -158,6 +159,19 @@ skn-nano +W. README.md
 
 Because `with-tty` and `tmux` run inside the sandbox,
 their executables must be visible there.
+If you want `with-tty` to use your regular tmux configuration,
+make it visible read-only too:
+```sh
+export SKN_RO_BINDS="${SKN_RO_BINDS:+$SKN_RO_BINDS:}$HOME/.tmux.conf"
+```
+
+`with-tty` intentionally sets only a small tmux baseline.
+For example, richer keybindings can live in your `~/.tmux.conf` instead:
+```tmux
+# Support richer keybindings, for example Ctrl-Enter, on modern terminals.
+set-option -g extended-keys on
+set-option -g extended-keys-format csi-u
+```
 
 ## Configuration
 
