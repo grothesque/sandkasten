@@ -37,6 +37,9 @@ See [Path checks](#path-checks) and
 skn COMMAND [skn-options] [++] [COMMAND-args...]
 ```
 
+Run `COMMAND` inside a `bwrap` sandbox intended for untrusted code.
+Without arguments, print a usage message and exit.
+
 `COMMAND` comes before `skn` options.
 This keeps aliases and wrappers transparent while putting sandbox controls in the separate `+` option namespace:
 ```sh
@@ -67,9 +70,6 @@ Options:
 ++            stop parsing skn options
 ```
 
-`+0` is intended for wrappers and similar tooling.
-See the source code for the current format.
-
 Bind options are order-sensitive.
 For example, `+T. +W ./out` makes the current directory transient-writable,
 then keeps `./out` persistent;
@@ -83,46 +83,27 @@ foo-json +R. input
 ```
 This runs `foo --format json input` with read-only access to the current directory.
 
-Some interactive programs need a controlling TTY or shell job control;
-for those, see [Interactive commands and `with-tty`](#interactive-commands-and-with-tty).
-
-Run `skn` without arguments to output a usage message and exit.
-
-`skn` recognizes the following environment variables:
-
-- `SKN_PATH_CHECK` names the mandatory path-check command for normal execution.
-- `SKN_RO_BINDS` adds configured additional read-only binds.
-- `SKN_PASS_VARS` names environment variables to pass when set.
-
-See [Configuration](#configuration) for details.
-
 ### Transient writable overlays
 
-Use `+T PATH` when an existing directory should appear writable but changes should be discarded.
+Use `+T PATH` when an existing directory should appear writable but host data should not be modified.
 Initial reads come from the host directory; writes, deletes,
-and replacements go to temporary sandbox storage and vanish when the sandbox exits.
+and replacements go to a tmpfs-backed overlay and vanish when the sandbox exits.
+For example:
+```sh
+skn make +T. ++ test
+```
 
-`+T` is useful for tools that insist on writing to a cache or source tree even when host data should not be modified.
+Bind order matters. To make most of the project transient-writable
+while keeping only `target` persistent, use:
+```sh
+mkdir -p target
+skn make +T. +W ./target ++ test
+```
 
 `+T` is not a snapshot and does not hide host data:
-concurrent host-side changes to the underlying directory are not hidden or made coherent,
-and reads can still expose secrets from that directory.
-Writes consume temporary sandbox storage.
-`+T` also depends on `bubblewrap` and kernel overlayfs support,
+concurrent host-side changes to the underlying directory are not hidden or made coherent.
+`+T` depends on `bubblewrap` and kernel overlayfs support,
 and may be unavailable with setuid bubblewrap.
-
-### Nested `skn` usage
-
-Inside a `skn` sandbox, scripts and aliases may invoke `skn` again,
-creating nested sandboxes.
-An inner sandbox cannot expose host paths that the outer sandbox did not expose,
-or make an outer read-only bind writable.
-
-To make nested usage convenient, `skn` passes `SKN_RO_BINDS` and `SKN_PASS_VARS` through
-and sets `SKN_PATH_CHECK=true` by default.
-Explicit `+V` options or `SKN_PASS_VARS` entries, including `SKN_PATH_CHECK`,
-take precedence over these nested defaults.
-Unset or override these variables before invoking the inner `skn` to make the nested sandbox narrower.
 
 ## Interactive commands and `with-tty`
 
@@ -237,21 +218,6 @@ export SKN_PASS_VARS=PYTHONPATH:SSH_AUTH_SOCK:DISPLAY
 `SKN_PASS_VARS` entries must be variable names, not assignments.
 Use `+V VAR` or `+V VAR=VALUE` for per-command environment grants.
 
-### Disposable project writes
-
-Use `+T` when a tool insists on writing into a tree but its changes should not be kept,
-for example with
-```sh
-skn make +T. ++ test
-```
-
-Bind order matters. To make most of the project transient-writable
-while keeping `target` persistent, use
-```sh
-mkdir -p target
-skn make +T. +W ./target ++ test
-```
-
 ## Sandbox model
 
 `skn` is deliberately simpler than `bwrap`.
@@ -269,7 +235,7 @@ In broad strokes:
 - A small amount of system configuration is bound read-only when useful.
 - User/project files are not visible unless explicitly bound with `+R`, `+W`, `+T`,
   or configured baseline binds such as `SKN_RO_BINDS`.
-- The synthetic sandbox filesystem is remounted read-only after setup.
+- After setup, the sandbox root filesystem is remounted read-only.
 - Persistent writes are limited to explicit `+W` binds.
 - Non-persistent writes are limited to the private `/tmp` and explicit `+T` overlays.
 
@@ -282,6 +248,19 @@ Use `+V`, `+E`, or `SKN_PASS_VARS` when environment access is needed.
 
 The exact built-in bind list is intentionally an implementation detail;
 inspect `./skn` or use `+S` to see the current plan.
+
+### Nested `skn` usage
+
+Inside a `skn` sandbox, scripts and aliases may invoke `skn` again,
+creating nested sandboxes.
+An inner sandbox cannot expose host paths that the outer sandbox did not expose,
+or make an outer read-only bind writable.
+
+To make nested usage convenient, `skn` passes `SKN_RO_BINDS` and `SKN_PASS_VARS` through
+and sets `SKN_PATH_CHECK=true` by default.
+Explicit `+V` options or `SKN_PASS_VARS` entries, including `SKN_PATH_CHECK`,
+take precedence over these nested defaults.
+Unset or override these variables before invoking the inner `skn` to make the nested sandbox narrower.
 
 ## Threat model and non-goals
 
