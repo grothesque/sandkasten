@@ -3,9 +3,8 @@
 # Run cargo under skn with defaults suitable for building untrusted projects.
 #
 # This wrapper intentionally stays small and delegates skn option parsing to
-# skn itself. Commands in net_auto_subcommands get network automatically.
-# Commands in net_deny_subcommands are never allowed network access.
-# Other identifiable subcommands run offline by default, but may use explicit +N.
+# skn itself. It tries to preserve ordinary Cargo workflows while separating
+# dependency fetching from build-time code execution where possible.
 #
 # Examples:
 #   skn-cargo fetch
@@ -18,12 +17,14 @@ set -euo pipefail
 # would become too confusing.
 progname=skn-cargo
 
-# Space-padded lists.
-# Auto-enable network only for commands expected to need it without building or
-# executing project code. Refuse network for commands that can build or execute
-# code, even when requested explicitly.
+# Space-padded subcommand policy lists.
+# Subcommands in net_auto_subcommands get network automatically because they are
+# expected to need it without building or executing project code. Subcommands in
+# auto_prefetch_subcommands are split into a networked `cargo fetch` followed by
+# the requested command offline. Other identifiable subcommands run offline by
+# default, unless explicit +N opts into a single networked invocation.
 net_auto_subcommands=' add fetch generate-lockfile info metadata search tree update vendor '
-net_deny_subcommands=' b bench build c check clippy d doc fix install miri package publish r run rustc rustdoc t test '
+auto_prefetch_subcommands=' b bench build c check clippy d doc r run t test '
 
 cargo_wrapper_max_depth=${SKN_CARGO_WRAPPER_MAX_DEPTH:-5}
 cargo_wrapper_depth=${SKN_CARGO_WRAPPER_DEPTH:-0}
@@ -132,6 +133,25 @@ set_parsed_positional() {
     parsed_arg=$1; parsed_found=1; shift; parsed_tail=("$@")
 }
 
+record_cargo_fetch_top_opt() {
+    local arg=$1
+
+    case $arg in
+        -C|--config|--color|-Z)
+            (($# >= 2)) || return 1
+            cargo_fetch_prefix+=("$arg" "$2")
+            ;;
+        -C?*|-Z?*|--config=*|--color=*|--locked|-q|--quiet|--verbose|-v|-vv|-vvv|-vvvv|-vvvvv)
+            cargo_fetch_prefix+=("$arg")
+            ;;
+        *)
+            cargo_fetch_prefix_valid=0
+            ;;
+    esac
+
+    return 0
+}
+
 parse_cargo_positionals() {
     local scope=$1 arg
     local flags=' --locked --offline --frozen -q --quiet --verbose -v -vv -vvv -vvvv -vvvvv '
@@ -168,6 +188,7 @@ parse_cargo_positionals() {
                 (($# >= 2)) || return 1
                 cargo_cwd=$2
                 cargo_has_cwd=1
+                record_cargo_fetch_top_opt "$arg" "$2"
                 shift 2
                 continue
                 ;;
@@ -175,6 +196,7 @@ parse_cargo_positionals() {
                 [[ $scope == top ]] || return 1
                 cargo_cwd=${arg:2}
                 cargo_has_cwd=1
+                record_cargo_fetch_top_opt "$arg"
                 shift
                 continue
                 ;;
@@ -184,17 +206,29 @@ parse_cargo_positionals() {
             -Z)
                 (($# >= 2)) || return 1
                 [[ $scope == top && $2 == script* ]] && return 1
+                [[ $scope == top ]] && record_cargo_fetch_top_opt "$arg" "$2"
                 shift 2
                 continue
+                ;;
+        esac
+
+        # Track top-level Cargo offline intent while parsing options. Later
+        # split-invocation logic must not prefetch when Cargo was asked to be
+        # offline.
+        case $arg in
+            --offline|--frozen)
+                [[ $scope == top ]] && cargo_cli_offline_intent=1
                 ;;
         esac
 
         if [[ $arg == -Z?* ]] ||
             word_in "$arg" "$flags" ||
             has_attached_value "$arg" "$value_opts"; then
+            [[ $scope == top ]] && record_cargo_fetch_top_opt "$arg"
             shift
         elif word_in "$arg" "$value_opts"; then
             (($# >= 2)) || return 1
+            [[ $scope == top ]] && record_cargo_fetch_top_opt "$arg" "$2"
             shift 2
         elif [[ $arg == -* ]]; then
             return 1
@@ -206,14 +240,23 @@ parse_cargo_positionals() {
 }
 
 analyze_cargo_args() {
+    local arg
+
     cargo_subcommand=
     cargo_subcommand_args=()
     cargo_creation_bind=
     cargo_cwd=
     cargo_has_cwd=0
+    cargo_cli_offline_intent=0
+    cargo_fetch_prefix=()
+    # Some understood top-level Cargo options, such as --help or --version, do
+    # not make sense on a synthetic `cargo fetch` invocation. Keep parsing them
+    # for Cargo compatibility, but suppress auto-prefetch when they appear.
+    cargo_fetch_prefix_valid=1
 
     # Cargo accepts an optional leading rustup-style +toolchain argument.
     if (($#)) && [[ $1 == +* ]]; then
+        cargo_fetch_prefix+=("$1")
         shift
     fi
 
@@ -221,7 +264,19 @@ analyze_cargo_args() {
     if ((parsed_found)); then
         cargo_subcommand=$parsed_arg
         cargo_subcommand_args=("${parsed_tail[@]}")
+
+        for arg in "${cargo_subcommand_args[@]}"; do
+            case $arg in
+                --) break ;;
+                --offline|--frozen)
+                    cargo_cli_offline_intent=1
+                    break
+                    ;;
+            esac
+        done
     fi
+
+    return 0
 }
 
 absolute_from_cargo_cwd() {
@@ -265,27 +320,21 @@ find_cargo_creation_bind() {
     cargo_creation_bind=$bind_path
 }
 
-cargo_install_likely_needs_network() {
-    local arg likely=0
+cargo_subcommand_args_have_help_intent() {
+    local arg
 
     for arg; do
         case $arg in
-            -h|--help|--list|--offline|--frozen|--path|--path=*) return 1 ;;
-            --git=*|--index=*|--registry=*) likely=1 ;;
-            --*) ;;
-            -*) ;;
-            *) likely=1 ;;
+            --) return 1 ;;
+            -h|--help) return 0 ;;
         esac
     done
 
-    ((likely))
+    return 1
 }
 
-cargo_net_offline_env_spec() {
-    local spec=$1 name
-
-    name=${spec%%=*}
-    [[ $name == CARGO_NET_OFFLINE ]]
+cargo_has_offline_intent() {
+    ((cargo_cli_offline_intent)) || [[ ${CARGO_NET_OFFLINE:-} == true ]]
 }
 
 reject_skn_cargo_net_offline_env() {
@@ -299,7 +348,7 @@ reject_ambiguous_skn_env_options() {
 
     for skn_arg in "${skn_argv[@]}"; do
         case $skn_arg in
-            +V*) cargo_net_offline_env_spec "${skn_arg:2}" && reject_skn_cargo_net_offline_env ;;
+            +VCARGO_NET_OFFLINE|+VCARGO_NET_OFFLINE=*) reject_skn_cargo_net_offline_env ;;
         esac
     done
 
@@ -327,25 +376,12 @@ parse_wrapper_args() {
     reject_ambiguous_skn_env_options
 }
 
-apply_current_network_policy() {
+apply_network_policy() {
     if analyze_cargo_args "${cargo_argv[@]}"; then
-        if [[ $cargo_subcommand == install ]]; then
-            if ((explicit_network)) ||
-                cargo_install_likely_needs_network "${cargo_subcommand_args[@]}"; then
-                echo "$progname: cargo install downloads and builds in one step" >&2
-                echo "$progname: run real Cargo in a networked skn shell instead" >&2
-                exit 2
+        if word_in "$cargo_subcommand" "$net_auto_subcommands"; then
+            if ((! explicit_network)) && ! cargo_has_offline_intent; then
+                skn_args+=(+N)
             fi
-        fi
-
-        if [[ $net_auto_subcommands == *" $cargo_subcommand "* ]]; then
-            ((! explicit_network)) && skn_args+=(+N)
-        elif [[ -z $cargo_subcommand || $net_deny_subcommands == *" $cargo_subcommand "* ]]; then
-            if ((explicit_network)); then
-                echo "$progname: refusing +N: network is not allowed for this Cargo invocation" >&2
-                exit 2
-            fi
-            skn_args+=(+V CARGO_NET_OFFLINE=true)
         elif ((! explicit_network)); then
             skn_args+=(+V CARGO_NET_OFFLINE=true)
         fi
@@ -359,44 +395,112 @@ apply_current_network_policy() {
     return 0
 }
 
-add_workspace_and_creation_binds() {
+collect_workspace_and_creation_binds() {
     if find_cargo_creation_bind; then
-        skn_args+=(+W "$cargo_creation_bind")
+        cargo_binds+=(+W "$cargo_creation_bind")
     fi
 
     if locate_workspace_manifest "$cargo_cwd" "$cargo_has_cwd"; then
-        skn_args+=(+W "$(dirname -- "$workspace_manifest")")
+        cargo_binds+=(+W "$(dirname -- "$workspace_manifest")")
     fi
 
     return 0
 }
 
-add_tool_home_binds() {
+collect_tool_home_binds() {
     local cargo_home rustup_home
 
     # If they exist, make cargo home writable and rustup home readable.
     cargo_home=${CARGO_HOME:-${HOME:+$HOME/.cargo}}
-    [[ -n $cargo_home && -e $cargo_home ]] && skn_args+=(+W "$cargo_home")
+    [[ -n $cargo_home && -e $cargo_home ]] && cargo_binds+=(+W "$cargo_home")
 
     rustup_home=${RUSTUP_HOME:-${HOME:+$HOME/.rustup}}
-    [[ -n $rustup_home && -e $rustup_home ]] && skn_args+=(+R "$rustup_home")
+    [[ -n $rustup_home && -e $rustup_home ]] && cargo_binds+=(+R "$rustup_home")
 
     return 0
 }
 
-add_cargo_binds() {
-    add_workspace_and_creation_binds
-    add_tool_home_binds
+collect_cargo_binds() {
+    cargo_binds=()
+    collect_workspace_and_creation_binds
+    collect_tool_home_binds
 }
 
 run_cargo_once() {
     exec "${skn_args[@]}" "$@"
 }
 
+construct_prefetch_argv() {
+    local arg
+
+    # Top-level Cargo options were parsed and copied while identifying the
+    # subcommand. Here, only copy subcommand options accepted by `cargo fetch`
+    # and ignore other command-specific arguments so they remain exclusive to
+    # the real Cargo invocation.
+    cargo_fetch_argv=("${cargo_fetch_prefix[@]}" fetch)
+
+    set -- "${cargo_subcommand_args[@]}"
+
+    while (($#)); do
+        arg=$1
+        case $arg in
+            --)
+                break
+                ;;
+            --config|--color|--manifest-path|--target)
+                (($# >= 2)) || return 1
+                cargo_fetch_argv+=("$arg" "$2")
+                shift 2
+                ;;
+            --config=*|--color=*|--manifest-path=*|--target=*|--locked|-q|--quiet|--verbose|-v|-vv|-vvv|-vvvv|-vvvvv)
+                cargo_fetch_argv+=("$arg")
+                shift
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+}
+
+auto_prefetch_cargo_command() {
+    word_in "$cargo_subcommand" "$auto_prefetch_subcommands" || return 1
+    ((cargo_fetch_prefix_valid)) || return 1
+    ((explicit_network)) && return 1
+    cargo_has_offline_intent && return 1
+    cargo_subcommand_args_have_help_intent "${cargo_subcommand_args[@]}" && return 1
+    return 0
+}
+
+run_cargo_with_prefetch() {
+    local -a fetch_skn_args
+
+    if ! construct_prefetch_argv; then
+        echo "$progname: internal error constructing cargo fetch invocation" >&2
+        exit 2
+    fi
+
+    fetch_skn_args=(
+        skn
+        "$real_cargo"
+        "${skn_argv[@]}"
+        +N
+        "${cargo_binds[@]}"
+    )
+
+    "${fetch_skn_args[@]}" ++ "${cargo_fetch_argv[@]}"
+    run_cargo_once "$@"
+}
+
 real_cargo=${SKN_REAL_CARGO:-cargo}
 
 init_skn_args
 parse_wrapper_args "$@"
-apply_current_network_policy
-add_cargo_binds
-run_cargo_once "$@"
+apply_network_policy
+collect_cargo_binds
+skn_args+=("${cargo_binds[@]}")
+if auto_prefetch_cargo_command; then
+    run_cargo_with_prefetch "$@"
+else
+    run_cargo_once "$@"
+fi

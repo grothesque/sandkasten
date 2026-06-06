@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- `skn-cargo`: Build-like subcommands now automatically prefetch dependencies
+  with network access before running the requested Cargo command offline.
+  Cargo offline controls suppress the prefetch; explicit `+N` runs Cargo once
+  with network access.
 - Improve compatibility of `with-tty` with arbitrary user `.tmux.conf`:
   limit given tmux options to essentials;
   make detachment prevention more robust and less intrusive.

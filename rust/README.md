@@ -25,22 +25,22 @@ The wrappers apply two complementary policies automatically:
 - **Minimize filesystem exposure.**
   They grant each command access only to the workspace and tool state it needs.
 - **Separate network access from code execution.**
-  Commands whose purpose is dependency resolution or retrieval may get network access;
-  commands that are known to execute project or dependency code are forced offline.
+  Commands whose purpose is dependency resolution or retrieval may get network access.
+  Common build-like commands are split into a networked prefetch phase
+  followed by the requested command in an offline sandbox.
 
 ## Typical workflow
 
-Fetch dependencies first:
-```sh
-skn-cargo fetch
-```
-
-Then build, test, and run offline:
+Build, test, and run normally:
 ```sh
 skn-cargo build
 skn-cargo test
 skn-cargo run
 ```
+
+When dependencies are missing or the lockfile needs updating,
+`skn-cargo` first runs a network-enabled `cargo fetch` phase.
+If that succeeds, it runs the requested command offline.
 
 Additional `skn` grants can be passed before the wrapped tool arguments.
 For example:
@@ -49,9 +49,9 @@ skn-cargo +R ../local-dependency build
 skn-cargo +T. test
 ```
 
-Trying to build with network access is refused:
+Explicit `+N` opts out of this split and runs one networked Cargo invocation:
 ```sh
-skn-cargo +N build    # Aborts with an error message.
+skn-cargo +N build    # Build scripts and proc macros may use the network.
 ```
 
 Use `+S` to inspect the resulting sandbox setup:
@@ -148,19 +148,36 @@ Automatic grants are visible with `+S` and are still checked by `SKN_PATH_CHECK`
 
 `skn-cargo` gives dependency-management subcommands such as `fetch` and `update`
 network access automatically.
-Known build-like subcommands such as `build`, `test`, `run`, `doc`, and `install`
-are forced offline and refuse explicit `+N`.
+Common build-like subcommands such as `build`, `check`, `clippy`, `doc`,
+`test`, `bench`, and `run` automatically prefetch dependencies with network
+access, then run the requested command offline.
 Other identifiable Cargo subcommands run offline by default,
 but may allow explicit `+N` when `skn-cargo` accepts the command shape.
 The exact policy lists live near the top of [`skn-cargo`](skn-cargo).
 
-This means that building after dependency changes may require two steps,
-for example `skn-cargo fetch` followed by `skn-cargo build`.
-The extra step is intentional.
+The prefetch phase uses `cargo fetch` conservatively.
+Cargo does not currently provide a stable command for “fetch exactly what this
+particular build would fetch without executing build code”, so the prefetch may
+download more than the following command strictly needs.
+The important property is that build scripts, proc macros, tests,
+and project subprocesses run in the offline phase.
 
-`skn-rust-analyzer` follows the same separation:
-fetch dependencies separately, then run rust-analyzer offline.
-It refuses network access.
+Cargo’s own offline controls suppress automatic prefetch:
+```sh
+skn-cargo build --offline
+skn-cargo build --frozen
+CARGO_NET_OFFLINE=true skn-cargo build
+```
+
+`skn-cargo +N ...` is the relaxed escape hatch.
+It runs the requested Cargo invocation once with network enabled,
+so build scripts, proc macros, tests, and subprocesses may use the network.
+The filesystem sandbox still applies.
+
+`skn-rust-analyzer` follows the same separation in the conservative direction:
+it refuses network access.
+If dependencies are missing, fetch or build them first with `skn-cargo`,
+then run rust-analyzer offline.
 Given current [rust-analyzer design](https://github.com/rust-lang/rust-analyzer/issues/22118),
 rust-analyzer and its Cargo subprocesses need writable workspace state.
 
@@ -171,10 +188,10 @@ Project-creation commands get narrower grants:
 and `cargo init` grants the target directory when it already exists,
 or its parent otherwise.
 
-`skn-cargo` refuses the ordinary networked form of `cargo install CRATE`,
-because it downloads code and builds it in one step.
+`skn-cargo` refuses the ordinary networked form of `cargo install CRATE`
+without `+N`, because it downloads code and builds it in one step.
 If you intentionally want that less restrictive workflow,
-run the real Cargo command yourself inside an explicitly networked `skn` shell.
+use `skn-cargo +N install CRATE`.
 
 `skn-rust-analyzer` runs rust-analyzer itself inside the sandbox.
 Cargo, rustc, build scripts, proc macros, tests,

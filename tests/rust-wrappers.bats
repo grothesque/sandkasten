@@ -10,8 +10,9 @@ setup() {
 
     FAKE_SKN_INFO_ARGS="$BATS_TEST_TMPDIR/skn-info.args"
     FAKE_SKN_FINAL_ARGS="$BATS_TEST_TMPDIR/skn-final.args"
+    FAKE_SKN_FINAL_ARGS_PREFIX="$BATS_TEST_TMPDIR/skn-final"
     FAKE_CARGO_LOCATE_CWD="$BATS_TEST_TMPDIR/cargo-locate.cwd"
-    export FAKE_SKN_INFO_ARGS FAKE_SKN_FINAL_ARGS FAKE_CARGO_LOCATE_CWD
+    export FAKE_SKN_INFO_ARGS FAKE_SKN_FINAL_ARGS FAKE_SKN_FINAL_ARGS_PREFIX FAKE_CARGO_LOCATE_CWD
 
     cat >"$fake_bin/skn" <<'EOF'
 #!/bin/bash
@@ -41,6 +42,18 @@ if ((has_info)); then
             ;;
     esac
     exit 0
+fi
+
+if [[ -n ${FAKE_SKN_FINAL_ARGS_PREFIX:-} ]]; then
+    count_file="$FAKE_SKN_FINAL_ARGS_PREFIX.count"
+    if [[ -e $count_file ]]; then
+        count=$(<"$count_file")
+    else
+        count=0
+    fi
+    count=$((count + 1))
+    printf '%s\n' "$count" >"$count_file"
+    printf '%s\0' "$@" >"$FAKE_SKN_FINAL_ARGS_PREFIX.$count.args"
 fi
 
 printf '%s\0' "$@" >"${FAKE_SKN_FINAL_ARGS:?}"
@@ -173,6 +186,25 @@ read_final_args() {
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
 }
 
+read_final_invocation_args() {
+    local index=$1
+    local name=$2
+
+    args="$BATS_TEST_TMPDIR/$name.lines"
+    write_args_lines "$FAKE_SKN_FINAL_ARGS_PREFIX.$index.args" "$args"
+}
+
+assert_final_invocation_count() {
+    local expected=$1
+    local actual=0
+
+    [[ ! -e $FAKE_SKN_FINAL_ARGS_PREFIX.count ]] || actual=$(<"$FAKE_SKN_FINAL_ARGS_PREFIX.count")
+    if [[ $actual != "$expected" ]]; then
+        printf 'expected final invocation count %s, got %s\n' "$expected" "$actual" >&2
+        return 1
+    fi
+}
+
 @test 'skn-cargo adds offline mode and writable workspace when network is disabled' {
     workspace="$BATS_TEST_TMPDIR/workspace"
     mkdir -p "$workspace"
@@ -196,6 +228,227 @@ read_final_args() {
     assert_args_not_contain_env "$args" CARGO
     assert_args_not_contain_env "$args" PATH
     assert_args_contain "$args" 'build'
+}
+
+@test 'skn-cargo auto-prefetches cargo build before running build offline' {
+    workspace="$BATS_TEST_TMPDIR/prefetch-workspace"
+    mkdir -p "$workspace"
+    touch "$workspace/Cargo.toml"
+    export FAKE_CARGO_LOCATE=success
+    export FAKE_WORKSPACE_MANIFEST="$workspace/Cargo.toml"
+
+    run "$SKN_CARGO" +V RUSTFLAGS=-Dwarnings build
+    assert_success
+    assert_final_invocation_count 2
+
+    read_final_invocation_args 1 fetch
+    assert_args_contain "$args" '+N'
+    assert_args_contain_pair "$args" '+W' "$workspace"
+    assert_args_contain "$args" 'fetch'
+    assert_args_not_contain "$args" 'build'
+    assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
+    assert_args_contain "$args" '+VRUSTFLAGS=-Dwarnings'
+
+    read_final_invocation_args 2 build
+    assert_args_not_contain "$args" '+N'
+    assert_args_contain_pair "$args" '+W' "$workspace"
+    assert_args_contain_pair "$args" '+V' 'CARGO_NET_OFFLINE=true'
+    assert_args_contain_pair "$args" '+V' 'RUSTFLAGS=-Dwarnings'
+    assert_args_contain "$args" 'build'
+}
+
+@test 'skn-cargo auto-prefetches common build-like subcommands before running them offline' {
+    local subcommand
+
+    for subcommand in check clippy doc test bench run; do
+        rm -f "$FAKE_SKN_FINAL_ARGS" "$FAKE_SKN_FINAL_ARGS_PREFIX.count"
+        run "$SKN_CARGO" "$subcommand"
+        assert_success
+        assert_final_invocation_count 2
+
+        read_final_invocation_args 1 "fetch-$subcommand"
+        assert_args_contain "$args" '+N'
+        assert_args_contain "$args" 'fetch'
+        assert_args_not_contain "$args" "$subcommand"
+        assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
+
+        read_final_invocation_args 2 "$subcommand"
+        assert_args_not_contain "$args" '+N'
+        assert_args_contain_pair "$args" '+V' 'CARGO_NET_OFFLINE=true'
+        assert_args_contain "$args" "$subcommand"
+    done
+}
+
+@test 'skn-cargo auto-prefetches built-in build-like aliases without expanding them' {
+    local cargo_alias
+
+    for cargo_alias in b c d t r; do
+        rm -f "$FAKE_SKN_FINAL_ARGS" "$FAKE_SKN_FINAL_ARGS_PREFIX.count"
+        run "$SKN_CARGO" "$cargo_alias"
+        assert_success
+        assert_final_invocation_count 2
+
+        read_final_invocation_args 1 "fetch-alias-$cargo_alias"
+        assert_args_contain "$args" '+N'
+        assert_args_contain "$args" 'fetch'
+        assert_args_not_contain "$args" "$cargo_alias"
+        assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
+
+        read_final_invocation_args 2 "alias-$cargo_alias"
+        assert_args_not_contain "$args" '+N'
+        assert_args_contain_pair "$args" '+V' 'CARGO_NET_OFFLINE=true'
+        assert_args_contain "$args" "$cargo_alias"
+    done
+}
+
+@test 'skn-cargo +S shows both auto-prefetch sandboxes' {
+    local fetch_line build_line
+
+    run env PATH="$REPO_ROOT:$PATH" SKN_REAL_CARGO="$REAL_FAKE_CARGO" "$SKN_CARGO" +S build
+    assert_success
+
+    assert_output_contains "skn: sandboxed command: $REAL_FAKE_CARGO fetch"
+    assert_output_contains "skn: sandboxed command: $REAL_FAKE_CARGO build"
+    assert_output_contains 'skn: network enabled'
+    assert_output_contains 'skn: network disabled'
+    assert_output_contains 'CARGO_NET_OFFLINE=true'
+
+    fetch_line=$(printf '%s\n' "$output" | line_number_matching "skn: sandboxed command: $REAL_FAKE_CARGO fetch")
+    build_line=$(printf '%s\n' "$output" | line_number_matching "skn: sandboxed command: $REAL_FAKE_CARGO build")
+    [[ -n $fetch_line && -n $build_line ]]
+    ((fetch_line < build_line))
+}
+
+@test 'skn-cargo constructs conservative cargo fetch arguments from cargo build' {
+    workspace="$BATS_TEST_TMPDIR/fetch-args-workspace"
+    mkdir -p "$workspace"
+    touch "$workspace/Cargo.toml"
+    export FAKE_CARGO_LOCATE=success
+    export FAKE_WORKSPACE_MANIFEST="$workspace/Cargo.toml"
+
+    run "$SKN_CARGO" +nightly -Z unstable-options -C "$workspace" \
+        --config net.git-fetch-with-cli=true -q build \
+        --manifest-path Cargo.toml --target wasm32-unknown-unknown \
+        --features serde --message-format=json
+    assert_success
+    assert_final_invocation_count 2
+
+    read_final_invocation_args 1 fetch-build-args
+    assert_args_contain "$args" '+nightly'
+    assert_args_contain "$args" '-Z'
+    assert_args_contain "$args" 'unstable-options'
+    assert_args_contain "$args" '-C'
+    assert_args_contain "$args" "$workspace"
+    assert_args_contain "$args" 'fetch'
+    assert_args_contain "$args" '--config'
+    assert_args_contain "$args" 'net.git-fetch-with-cli=true'
+    assert_args_contain "$args" '-q'
+    assert_args_contain "$args" '--manifest-path'
+    assert_args_contain "$args" 'Cargo.toml'
+    assert_args_contain "$args" '--target'
+    assert_args_contain "$args" 'wasm32-unknown-unknown'
+    assert_args_not_contain "$args" 'build'
+    assert_args_not_contain "$args" '--features'
+    assert_args_not_contain "$args" 'serde'
+    assert_args_not_contain "$args" '--message-format=json'
+}
+
+@test 'skn-cargo does not auto-prefetch cargo build when network or offline intent is explicit' {
+    local words args
+    local -a argv
+
+    for words in '+N build' 'build --offline' 'build --frozen' '--offline build' '--frozen build' 'build --help' 'build -h'; do
+        rm -f "$FAKE_SKN_FINAL_ARGS" "$FAKE_SKN_FINAL_ARGS_PREFIX.count"
+        read -r -a argv <<<"$words"
+        run "$SKN_CARGO" "${argv[@]}"
+        assert_success
+        assert_final_invocation_count 1
+
+        args="$BATS_TEST_TMPDIR/final-no-prefetch-${words// /-}.lines"
+        write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+        assert_args_contain "$args" 'build'
+        if [[ $words == +N* ]]; then
+            assert_args_contain "$args" '+N'
+            assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
+        else
+            assert_args_not_contain "$args" '+N'
+            assert_args_contain_pair "$args" '+V' 'CARGO_NET_OFFLINE=true'
+        fi
+    done
+
+    rm -f "$FAKE_SKN_FINAL_ARGS" "$FAKE_SKN_FINAL_ARGS_PREFIX.count"
+    run env CARGO_NET_OFFLINE=true "$SKN_CARGO" build
+    assert_success
+    assert_final_invocation_count 1
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$BATS_TEST_TMPDIR/final-env-offline-build.lines"
+    assert_args_not_contain "$BATS_TEST_TMPDIR/final-env-offline-build.lines" '+N'
+    assert_args_contain_pair "$BATS_TEST_TMPDIR/final-env-offline-build.lines" '+V' 'CARGO_NET_OFFLINE=true'
+}
+
+@test 'skn-cargo skips auto-prefetch for supported top-level Cargo options that fetch cannot replay' {
+    local words args
+    local -a argv
+
+    for words in '--version build' '--list build' '--explain E0308 build'; do
+        rm -f "$FAKE_SKN_FINAL_ARGS" "$FAKE_SKN_FINAL_ARGS_PREFIX.count"
+        read -r -a argv <<<"$words"
+        run "$SKN_CARGO" "${argv[@]}"
+        assert_success
+        assert_final_invocation_count 1
+
+        args="$BATS_TEST_TMPDIR/final-no-prefetch-${words// /-}.lines"
+        write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+        assert_args_not_contain "$args" '+N'
+        assert_args_contain_pair "$args" '+V' 'CARGO_NET_OFFLINE=true'
+    done
+}
+
+@test 'skn-cargo skips auto-prefetch for non-build commands with offline or help intent' {
+    local words args
+    local -a argv
+
+    for words in 'test --offline' 'clippy --help'; do
+        rm -f "$FAKE_SKN_FINAL_ARGS" "$FAKE_SKN_FINAL_ARGS_PREFIX.count"
+        read -r -a argv <<<"$words"
+        run "$SKN_CARGO" "${argv[@]}"
+        assert_success
+        assert_final_invocation_count 1
+
+        args="$BATS_TEST_TMPDIR/final-no-prefetch-${words// /-}.lines"
+        write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+        assert_args_not_contain "$args" '+N'
+        assert_args_contain_pair "$args" '+V' 'CARGO_NET_OFFLINE=true'
+    done
+}
+
+@test 'skn-cargo still auto-prefetches when --help belongs to the program being run' {
+    run "$SKN_CARGO" run -- --help
+    assert_success
+    assert_final_invocation_count 2
+
+    read_final_invocation_args 1 fetch-run-help
+    assert_args_contain "$args" '+N'
+    assert_args_contain "$args" 'fetch'
+    assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
+
+    read_final_invocation_args 2 run-help
+    assert_args_not_contain "$args" '+N'
+    assert_args_contain_pair "$args" '+V' 'CARGO_NET_OFFLINE=true'
+    assert_args_contain "$args" 'run'
+    assert_args_contain "$args" '--help'
+}
+
+@test 'skn-cargo stops if build prefetch fails' {
+    export FAKE_SKN_FINAL_STATUS=37
+
+    run "$SKN_CARGO" build
+    assert_status 37
+    assert_final_invocation_count 1
+
+    read_final_invocation_args 1 failed-fetch
+    assert_args_contain "$args" '+N'
+    assert_args_contain "$args" 'fetch'
+    assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
 }
 
 @test 'skn-cargo honors top-level -C for workspace detection' {
@@ -301,6 +554,38 @@ read_final_args() {
         assert_args_contain "$args" "$subcommand"
         assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
     done
+}
+
+@test 'skn-cargo does not auto-enable network when Cargo offline intent is explicit' {
+    local words args
+    local -a argv
+
+    for words in 'fetch --offline' 'fetch --frozen' '--offline fetch' '--frozen fetch'; do
+        rm -f "$FAKE_SKN_FINAL_ARGS"
+        read -r -a argv <<<"$words"
+        run "$SKN_CARGO" "${argv[@]}"
+        assert_success
+
+        args="$BATS_TEST_TMPDIR/final-offline-intent-${words// /-}.lines"
+        write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+        assert_args_not_contain "$args" '+N'
+        assert_args_contain "$args" 'fetch'
+    done
+
+    rm -f "$FAKE_SKN_FINAL_ARGS"
+    run env CARGO_NET_OFFLINE=true "$SKN_CARGO" fetch
+    assert_success
+    args="$BATS_TEST_TMPDIR/final-cargo-net-offline-true.lines"
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+    assert_args_not_contain "$args" '+N'
+    assert_args_contain "$args" 'fetch'
+
+    rm -f "$FAKE_SKN_FINAL_ARGS"
+    run env CARGO_NET_OFFLINE=false "$SKN_CARGO" fetch
+    assert_success
+    args="$BATS_TEST_TMPDIR/final-cargo-net-offline-false.lines"
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+    assert_args_contain "$args" '+N'
 }
 
 @test 'skn-cargo allows explicit network for an auto-networked subcommand' {
@@ -417,14 +702,19 @@ read_final_args() {
     assert_args_contain "$BATS_TEST_TMPDIR/final-c-attached-fetch.lines" '+N'
 }
 
-@test 'skn-cargo refuses network for a denied subcommand after Cargo top-level options' {
+@test 'skn-cargo allows explicit network for a denied subcommand after Cargo top-level options' {
     run "$SKN_CARGO" +N --locked -q build
-    assert_status 2
-    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+    assert_success
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$BATS_TEST_TMPDIR/final-build-locked.lines"
+    assert_args_contain "$BATS_TEST_TMPDIR/final-build-locked.lines" '+N'
+    assert_args_not_contain "$BATS_TEST_TMPDIR/final-build-locked.lines" 'CARGO_NET_OFFLINE=true'
 
+    rm -f "$FAKE_SKN_FINAL_ARGS"
     run "$SKN_CARGO" +N -C . build
-    assert_status 2
-    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+    assert_success
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$BATS_TEST_TMPDIR/final-build-c.lines"
+    assert_args_contain "$BATS_TEST_TMPDIR/final-build-c.lines" '+N'
+    assert_args_not_contain "$BATS_TEST_TMPDIR/final-build-c.lines" 'CARGO_NET_OFFLINE=true'
 }
 
 @test 'skn-cargo falls back to offline mode when it cannot identify the subcommand without +N' {
@@ -453,17 +743,30 @@ read_final_args() {
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 }
 
-@test 'skn-cargo gives clearer errors for registry or Git cargo install' {
-    local words
+@test 'skn-cargo runs cargo install offline by default' {
+    local words install_args="$BATS_TEST_TMPDIR/final-install-default.lines"
     local -a argv
 
-    for words in 'install cargo-edit' 'install --git=https://example.invalid/repo.git' '+N install cargo-edit'; do
+    for words in 'install cargo-edit' 'install --git=https://example.invalid/repo.git'; do
+        rm -f "$FAKE_SKN_FINAL_ARGS"
         read -r -a argv <<<"$words"
         run "$SKN_CARGO" "${argv[@]}"
-        assert_status 2
-        assert_output_contains 'cargo install downloads and builds in one step'
-        [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+        assert_success
+        write_args_lines "$FAKE_SKN_FINAL_ARGS" "$install_args"
+        assert_args_contain_pair "$install_args" '+V' 'CARGO_NET_OFFLINE=true'
     done
+}
+
+@test 'skn-cargo allows explicit network for cargo install' {
+    run "$SKN_CARGO" +N install cargo-edit
+    assert_success
+
+    args="$BATS_TEST_TMPDIR/final-install-network.lines"
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+    assert_args_contain "$args" '+N'
+    assert_args_contain "$args" 'install'
+    assert_args_contain "$args" 'cargo-edit'
+    assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
 }
 
 @test 'skn-cargo still permits clearly local or offline cargo install forms' {
@@ -480,22 +783,36 @@ read_final_args() {
     done
 }
 
-@test 'skn-cargo refuses network for denied aliases, denied subcommands, or absent subcommands' {
-    local subcommand
+@test 'skn-cargo allows explicit network for denied aliases, denied subcommands, or absent subcommands' {
+    local subcommand args
 
     for subcommand in b c d r t build; do
+        rm -f "$FAKE_SKN_FINAL_ARGS"
         run "$SKN_CARGO" +N "$subcommand"
-        assert_status 2
-        [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+        assert_success
+        args="$BATS_TEST_TMPDIR/final-network-$subcommand.lines"
+        write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+        assert_args_contain "$args" '+N'
+        assert_args_contain "$args" "$subcommand"
+        assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
     done
 
+    rm -f "$FAKE_SKN_FINAL_ARGS"
     run "$SKN_CARGO" +N
-    assert_status 2
-    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+    assert_success
+    args="$BATS_TEST_TMPDIR/final-network-no-subcommand.lines"
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+    assert_args_contain "$args" '+N'
+    assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
 
+    rm -f "$FAKE_SKN_FINAL_ARGS"
     run "$SKN_CARGO" +N --version
-    assert_status 2
-    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+    assert_success
+    args="$BATS_TEST_TMPDIR/final-network-version.lines"
+    write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
+    assert_args_contain "$args" '+N'
+    assert_args_contain "$args" '--version'
+    assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
 }
 
 @test 'skn-cargo adds home binds as explicit skn options when present' {

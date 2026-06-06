@@ -139,8 +139,8 @@ See [Installation and setup](USAGE.md#installation-and-setup) and [Path checks](
 This project includes `skn`-based wrappers for the Rust development tools
 [Cargo](https://doc.rust-lang.org/cargo/) and
 [rust-analyzer](https://rust-analyzer.github.io/).
-They support a cautious workflow: fetch dependencies with network access,
-then build and analyze offline; see the [Rust wrappers README](rust/README.md).
+They support a cautious workflow: dependency fetching may use network access,
+while builds and analysis run offline by default; see the [Rust wrappers README](rust/README.md).
 
 Sandkasten can also serve as an outer sandbox for coding-agent harnesses.
 For example, it is the recommended outer sandbox for

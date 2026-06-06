@@ -212,7 +212,8 @@ skn-cargo-basic +W. --offline build
 This illustrates a useful pattern: fetch dependencies with network access,
 then build without network access.
 The bundled [Rust wrappers](rust/README.md) provide a more targeted solution:
-`skn-cargo` automates workspace and Cargo-home grants
-and refuses network access for build-like commands,
-while `skn-rust-analyzer` runs rust-analyzer and its Cargo subprocesses in an offline sandbox.
+`skn-cargo` automates workspace and Cargo-home grants,
+automatically prefetches dependencies for common build-like commands,
+and runs build-like commands offline by default.
+`skn-rust-analyzer` runs rust-analyzer and its Cargo subprocesses in an offline sandbox.
 These wrappers also serve as examples of building tool-specific wrappers around `skn`.
