@@ -187,6 +187,138 @@ EOF
     assert_success
 }
 
+@test '+X expands skn options from a PATH helper' {
+    fake_bin="$BATS_TEST_TMPDIR/bin"
+    mkdir -p "$fake_bin"
+
+    cat >"$fake_bin/skn-expansion-demo" <<EOF
+#!/bin/bash
+printf '%s\n' +R '$BATS_TEST_TMPDIR/read path' +W '$BATS_TEST_TMPDIR/write-path' +N +V FOO=bar +A prep
+EOF
+    chmod +x "$fake_bin/skn-expansion-demo"
+
+    run env -u SKN_PATH_CHECK PATH="$fake_bin:$PATH" "$SKN" echo +S +Xdemo run
+
+    assert_success
+    assert_output_contains 'skn: sandboxed command: echo prep run'
+    assert_output_contains 'skn: network enabled'
+    assert_output_contains "--ro-bind $BATS_TEST_TMPDIR/read\\ path $BATS_TEST_TMPDIR/read\\ path"
+    assert_output_contains "--bind $BATS_TEST_TMPDIR/write-path $BATS_TEST_TMPDIR/write-path"
+    assert_output_contains '--setenv FOO bar'
+    assert_output_not_contains '+X'
+}
+
+@test '+X expanded options appear in +0 machine info' {
+    fake_bin="$BATS_TEST_TMPDIR/bin"
+    mkdir -p "$fake_bin"
+
+    cat >"$fake_bin/skn-expansion-demo" <<EOF
+#!/bin/bash
+printf '%s\n' +W '$BATS_TEST_TMPDIR/work' +E
+EOF
+    chmod +x "$fake_bin/skn-expansion-demo"
+
+    run bash -c 'env -u SKN_PATH_CHECK PATH="$2:$PATH" "$1" cmd +0 +X demo arg | tr "\0" "\n"' _ "$SKN" "$fake_bin"
+
+    assert_success
+    assert_output_contains 'skn-info-mk2'
+    assert_output_contains '+W'
+    assert_output_contains "$BATS_TEST_TMPDIR/work"
+    assert_output_contains '+E'
+    assert_output_not_contains '+X'
+}
+
+@test '+X output paths are still checked during normal execution' {
+    fake_bin="$BATS_TEST_TMPDIR/bin"
+    mkdir -p "$fake_bin"
+
+    cat >"$fake_bin/skn-expansion-demo" <<EOF
+#!/bin/bash
+printf '%s\n' +R '$BATS_TEST_TMPDIR/rejected'
+EOF
+    chmod +x "$fake_bin/skn-expansion-demo"
+
+    run env SKN_PATH_CHECK=false PATH="$fake_bin:$PATH" "$SKN" true +X demo
+
+    assert_status 2
+    assert_output_contains 'SKN_PATH_CHECK rejected'
+    assert_output_contains "$BATS_TEST_TMPDIR/rejected"
+}
+
+@test '+X rejects invalid names and reports missing helpers' {
+    run env -u SKN_PATH_CHECK "$SKN" true +S +X ../demo
+    assert_status 2
+    assert_output_contains 'invalid expansion name'
+
+    run env -u SKN_PATH_CHECK "$SKN" true +S +X missing
+    assert_status 2
+    assert_output_contains 'expansion missing failed'
+    assert_output_contains 'skn-expansion-missing'
+}
+
+@test '+X runs expansion shell functions' {
+    run bash -c 'skn-expansion-demo() { printf "%s\n" +N; }; export -f skn-expansion-demo; env -u SKN_PATH_CHECK PATH=/usr/bin:/bin "$1" true +S +X demo' _ "$SKN"
+
+    assert_success
+    assert_output_contains 'skn: network enabled'
+    assert_output_contains '--share-net'
+}
+
+@test '+X rejects control options and command arguments from expansions' {
+    fake_bin="$BATS_TEST_TMPDIR/bin"
+    mkdir -p "$fake_bin"
+
+    cat >"$fake_bin/skn-expansion-show" <<'EOF'
+#!/bin/bash
+printf '%s\n' +S
+EOF
+    chmod +x "$fake_bin/skn-expansion-show"
+
+    run env -u SKN_PATH_CHECK PATH="$fake_bin:$PATH" "$SKN" true +S +X show
+    assert_status 2
+    assert_output_contains 'disallowed skn control option'
+    assert_output_contains '+S'
+
+    cat >"$fake_bin/skn-expansion-recurse" <<'EOF'
+#!/bin/bash
+printf '%s\n' +X other
+EOF
+    chmod +x "$fake_bin/skn-expansion-recurse"
+
+    run env -u SKN_PATH_CHECK PATH="$fake_bin:$PATH" "$SKN" true +S +X recurse
+    assert_status 2
+    assert_output_contains 'disallowed skn control option'
+    assert_output_contains '+X'
+
+    cat >"$fake_bin/skn-expansion-arg" <<'EOF'
+#!/bin/bash
+printf '%s\n' +N command-arg
+EOF
+    chmod +x "$fake_bin/skn-expansion-arg"
+
+    run env -u SKN_PATH_CHECK PATH="$fake_bin:$PATH" "$SKN" true +S +X arg
+    assert_status 2
+    assert_output_contains 'non-option argument'
+    assert_output_contains 'command-arg'
+}
+
+@test '+X rejects incomplete expansion options' {
+    fake_bin="$BATS_TEST_TMPDIR/bin"
+    mkdir -p "$fake_bin"
+
+    cat >"$fake_bin/skn-expansion-incomplete" <<'EOF'
+#!/bin/bash
+printf '%s\n' +R
+EOF
+    chmod +x "$fake_bin/skn-expansion-incomplete"
+
+    run env -u SKN_PATH_CHECK PATH="$fake_bin:$PATH" "$SKN" true +S +X incomplete
+
+    assert_status 2
+    assert_output_contains 'without an argument'
+    assert_output_contains '+R'
+}
+
 @test '+S still rejects malformed skn options' {
     run env -u SKN_PATH_CHECK "$SKN" true +S +V 1BAD=value
     assert_status 2

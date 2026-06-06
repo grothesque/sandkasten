@@ -6,6 +6,8 @@
   with network access before running the requested Cargo command offline.
   Cargo offline controls suppress the prefetch; explicit `+N` runs Cargo once
   with network access.
+- Add `+X NAME` expansions: trusted `skn-expansion-NAME` helpers can emit
+  reusable groups of `skn` options, one argument per line.
 - Improve compatibility of `with-tty` with arbitrary user `.tmux.conf`:
   limit given tmux options to essentials;
   make detachment prevention more robust and less intrusive.

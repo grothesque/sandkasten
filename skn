@@ -39,6 +39,7 @@ skn-options:
   +V VAR          pass environment VAR into the sandbox if it is set
   +V VAR=VALUE    set environment VAR to VALUE inside the sandbox
   +A ARG          prepend ARG to COMMAND arguments
+  +X NAME         expand skn options from skn-expansion-NAME
   +N              enable network access
   +E              preserve caller environment instead of clearing it
   +S              show the sandbox plan after parsing, then exit
@@ -308,6 +309,166 @@ queue_pass_var_name() {
     env_queue+=(pass "$name" '')
 }
 
+valid_expansion_name() {
+    [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]
+}
+
+run_expansion() {
+    local name=$1
+    local expansion_cmd status stdout_file
+
+    valid_expansion_name "$name" || error "invalid expansion name for +X: $name"
+
+    expansion_cmd=skn-expansion-$name
+
+    stdout_file=$(mktemp) || exit 2
+    if "$expansion_cmd" >"$stdout_file"; then
+        expansion_args=()
+        mapfile -t expansion_args <"$stdout_file"
+        rm -f -- "$stdout_file"
+    else
+        status=$?
+        rm -f -- "$stdout_file"
+        echo "$progname: expansion $name failed: $expansion_cmd exited with status $status" >&2
+        echo "Try '$progname --help' for more information." >&2
+        exit 2
+    fi
+}
+
+# Uses parse_skn_options' dynamically scoped parse_mode/expansion_context.
+reject_in_expansion() {
+    local message=$1
+
+    [[ ${parse_mode:-} == expansion ]] || return 0
+    error "expansion ${expansion_context:-} emitted $message"
+}
+
+require_option_arg() {
+    local option=$1
+    local argc=$2
+
+    ((argc >= 2)) && return 0
+    reject_in_expansion "$option without an argument"
+    error "missing argument for $option"
+}
+
+parse_skn_options() {
+    local parse_mode=$1
+    local expansion_context='' option path env_spec expansion_name command_arg
+
+    shift
+    if [[ $parse_mode == expansion ]]; then
+        expansion_context=$1
+        shift
+    fi
+
+    parse_remaining_args=()
+
+    while (($#)); do
+        case $1 in
+            ++)
+                reject_in_expansion "disallowed skn control option: $1"
+                shift
+                parse_remaining_args=("$@")
+                return 0
+                ;;
+            +N)
+                network=1
+                skn_option_args+=(+N)
+                machine_skn_args+=(+N)
+                shift
+                continue
+                ;;
+            +E)
+                preserve_env=1
+                skn_option_args+=(+E)
+                machine_skn_args+=(+E)
+                shift
+                continue
+                ;;
+            +S)
+                reject_in_expansion "disallowed skn control option: $1"
+                show_mode=1
+                machine_skn_args+=(+S)
+                shift
+                continue
+                ;;
+            +0)
+                reject_in_expansion "disallowed skn control option: $1"
+                machine_mode=1
+                shift
+                continue
+                ;;
+            +X|+X?*)
+                reject_in_expansion "disallowed skn control option: $1"
+                if [[ $1 == +X ]]; then
+                    require_option_arg +X $#
+                    expansion_name=$2
+                    shift 2
+                else
+                    expansion_name=${1:2}
+                    shift
+                fi
+                run_expansion "$expansion_name"
+                parse_skn_options expansion "$expansion_name" "${expansion_args[@]}"
+                continue
+                ;;
+            +R|+W|+T|+R?*|+W?*|+T?*)
+                option=${1:0:2}
+                if [[ $1 == "$option" ]]; then
+                    require_option_arg "$option" $#
+                    path=$2
+                    shift 2
+                else
+                    path=${1:2}
+                    shift
+                fi
+                ;;
+            +V|+V?*)
+                if [[ $1 == +V ]]; then
+                    require_option_arg +V $#
+                    env_spec=$2
+                    shift 2
+                else
+                    env_spec=${1:2}
+                    shift
+                fi
+                queue_env_spec "$env_spec"
+                skn_option_args+=(+V "$env_spec")
+                machine_skn_args+=("+V$env_spec")
+                continue
+                ;;
+            +A|+A?*)
+                if [[ $1 == +A ]]; then
+                    require_option_arg +A $#
+                    command_arg=$2
+                    shift 2
+                else
+                    command_arg=${1:2}
+                    shift
+                fi
+                command_args+=("$command_arg")
+                continue
+                ;;
+            +[A-Z]*)
+                reject_in_expansion "unsupported skn option: $1"
+                echo "$progname: reserved skn option: $1" >&2
+                error "use ++ before command arguments that start with +<uppercase>"
+                ;;
+            *)
+                reject_in_expansion "non-option argument: $1"
+                parse_remaining_args=("$@")
+                return 0
+                ;;
+        esac
+
+        [[ -n $path ]] || error "empty path for $option"
+        bind_queue+=("$option" "$path")
+        skn_option_args+=("$option" "$path")
+        machine_skn_args+=("$option$path")
+    done
+}
+
 add_base_bwrap_setup() {
     add_bwrap_args --unshare-all
     add_bwrap_args --hostname skn
@@ -407,6 +568,8 @@ env_queue=()
 env_ro_bind_queue=()
 bind_queue=()
 machine_skn_args=()
+expansion_args=()
+parse_remaining_args=()
 bwrap_args=()
 bwrap_display_lines=()
 env_loaded=0
@@ -416,95 +579,8 @@ declare -A env_values=()
 [[ -v SKN_RO_BINDS ]] && queue_colon_list "$SKN_RO_BINDS" queue_env_ro_bind
 [[ -v SKN_PASS_VARS ]] && queue_colon_list "$SKN_PASS_VARS" queue_pass_var_name
 
-# Parse wrapper options. The remaining arguments are for the command.
-#
-# Note: if we ever decide to support further optional sandbox relaxations, let
-# us consider adding a master option (perhaps +X for relax), e.g. +X ipc.  The
-# current +N and +E can then remain aliases for, respectively, +X net and +X
-# env.
-while (($#)); do
-    case $1 in
-        ++)
-            shift
-            break
-            ;;
-        +N)
-            network=1
-            skn_option_args+=(+N)
-            machine_skn_args+=(+N)
-            shift
-            continue
-            ;;
-        +E)
-            preserve_env=1
-            skn_option_args+=(+E)
-            machine_skn_args+=(+E)
-            shift
-            continue
-            ;;
-        +S)
-            show_mode=1
-            machine_skn_args+=(+S)
-            shift
-            continue
-            ;;
-        +0)
-            machine_mode=1
-            shift
-            continue
-            ;;
-        +R|+W|+T)
-            option=$1
-            (($# >= 2)) || error "missing argument for $option"
-            path=$2
-            shift 2
-            ;;
-        +R?*|+W?*|+T?*)
-            option=${1:0:2}
-            path=${1:2}
-            shift
-            ;;
-        +V)
-            (($# >= 2)) || error "missing argument for +V"
-            queue_env_spec "$2"
-            skn_option_args+=(+V "$2")
-            machine_skn_args+=("+V$2")
-            shift 2
-            continue
-            ;;
-        +V?*)
-            env_spec=${1:2}
-            queue_env_spec "$env_spec"
-            skn_option_args+=(+V "$env_spec")
-            machine_skn_args+=("+V$env_spec")
-            shift
-            continue
-            ;;
-        +A)
-            (($# >= 2)) || error "missing argument for +A"
-            command_args+=("$2")
-            shift 2
-            continue
-            ;;
-        +A?*)
-            command_args+=("${1:2}")
-            shift
-            continue
-            ;;
-        +[A-Z]*)
-            echo "$progname: reserved skn option: $1" >&2
-            error "use ++ before command arguments that start with +<uppercase>"
-            ;;
-        *)
-            break
-            ;;
-    esac
-
-    [[ -n $path ]] || error "empty path for $option"
-    bind_queue+=("$option" "$path")
-    skn_option_args+=("$option" "$path")
-    machine_skn_args+=("$option$path")
-done
+parse_skn_options main "$@"
+set -- "${parse_remaining_args[@]}"
 
 if ((machine_mode)); then
     print_machine_info "$@"
