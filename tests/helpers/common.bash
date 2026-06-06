@@ -5,9 +5,10 @@
 REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
 SKN="$REPO_ROOT/skn"
 SKN_CARGO="$REPO_ROOT/rust/skn-cargo"
+SKN_EXPANSION_CARGO="$REPO_ROOT/rust/skn-expansion-cargo"
 SKN_RUST_ANALYZER="$REPO_ROOT/rust/skn-rust-analyzer"
-PATH="$REPO_ROOT:$PATH"
-export REPO_ROOT SKN SKN_CARGO SKN_RUST_ANALYZER PATH
+PATH="$REPO_ROOT:$REPO_ROOT/rust:$PATH"
+export REPO_ROOT SKN SKN_CARGO SKN_EXPANSION_CARGO SKN_RUST_ANALYZER PATH
 
 assert_success() {
     if [[ $status -ne 0 ]]; then

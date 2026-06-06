@@ -15,6 +15,8 @@ except that they run under [Sandkasten (`skn`)](../README.md)
 and add suitable `skn` options automatically
 based on the command line and the directory from which they are run:
 
+- `skn-expansion-cargo` emits inspectable `skn` grants
+  for working in a Cargo context.
 - `skn-cargo` runs Cargo in a mostly automatic sandbox,
   with network access subject to command-specific restrictions.
 - `skn-rust-analyzer` runs rust-analyzer in a sandbox,
@@ -30,6 +32,13 @@ The wrappers apply two complementary policies automatically:
   followed by the requested command in an offline sandbox.
 
 ## Typical workflow
+
+For a general sandboxed command or coding agent
+that should work in the current Cargo package,
+use the Cargo expansion:
+```sh
+skn COMMAND +X cargo
+```
 
 Build, test, and run normally:
 ```sh
@@ -66,8 +75,9 @@ The general `skn` option syntax is documented in the [usage guide](../USAGE.md#i
 
 ### Requirements
 
-The wrappers require `skn` in `PATH`.
-`skn-cargo` needs Cargo.
+The wrappers and expansion require `skn` in `PATH`.
+The wrappers also require `skn-expansion-cargo` in `PATH`.
+`skn-expansion-cargo` and `skn-cargo` need Cargo.
 `skn-rust-analyzer` needs both Cargo and rust-analyzer.
 The corresponding real tools must be either in `PATH`
 or set explicitly using `SKN_REAL_CARGO` and `SKN_REAL_RUST_ANALYZER`.
@@ -80,6 +90,7 @@ see the usage guide’s [setup section](../USAGE.md#setup).
 The least surprising setup is to install the wrappers under their own names:
 ```sh
 mkdir -p ~/.local/bin
+install rust/skn-expansion-cargo ~/.local/bin/skn-expansion-cargo
 install rust/skn-cargo ~/.local/bin/skn-cargo
 install rust/skn-rust-analyzer ~/.local/bin/skn-rust-analyzer
 ```
@@ -146,6 +157,21 @@ set `SKN_REAL_CARGO` and `SKN_REAL_RUST_ANALYZER` to those real paths instead.
 
 Automatic grants are visible with `+S` and are still checked by `SKN_PATH_CHECK`.
 
+`skn-expansion-cargo` can be used directly through `+X cargo`.
+When run from a Cargo workspace member, it grants read-only access to the workspace,
+writable access to the current directory,
+and writable access to the workspace `target` directory.
+If the `target` directory does not exist,
+the expansion creates it before emitting grants.
+When run from the workspace root, it grants the root writable instead.
+Outside a Cargo workspace, it emits no project grants.
+When Cargo home exists, it grants Cargo home read-only and creates/grants
+Cargo's `registry` and `git` cache subdirectories writable.
+It grants rustup home read-only when it exists.
+Commands that modify Cargo configuration, credentials, or installed binaries,
+such as `cargo login` or `cargo install`, need additional explicit grants
+such as `+W ~/.cargo` or `+W ~/.cargo/bin`.
+
 `skn-cargo` gives dependency-management subcommands such as `fetch` and `update`
 network access automatically.
 Common build-like subcommands such as `build`, `check`, `clippy`, `doc`,
@@ -179,11 +205,13 @@ it refuses network access.
 If dependencies are missing, fetch or build them first with `skn-cargo`,
 then run rust-analyzer offline.
 Given current [rust-analyzer design](https://github.com/rust-lang/rust-analyzer/issues/22118),
-rust-analyzer and its Cargo subprocesses need writable workspace state.
+rust-analyzer and its Cargo subprocesses need writable Cargo state.
 
-`skn-cargo` grants the detected Cargo workspace writable access.
-Outside a workspace, it does not bind the current directory for general commands.
-Project-creation commands get narrower grants:
+`skn-cargo` and `skn-rust-analyzer` use `skn-expansion-cargo`
+for their Cargo-context filesystem and toolchain grants.
+For `skn-cargo`, the expansion runs from Cargo’s effective working directory,
+including any top-level `cargo -C DIR` option.
+Project-creation commands add creation-specific grants:
 `cargo new PATH` grants the parent directory,
 and `cargo init` grants the target directory when it already exists,
 or its parent otherwise.
@@ -196,17 +224,18 @@ use `skn-cargo +N install CRATE`.
 `skn-rust-analyzer` runs rust-analyzer itself inside the sandbox.
 Cargo, rustc, build scripts, proc macros, tests,
 and other subprocesses launched by rust-analyzer inherit that sandbox.
-It grants the detected Cargo workspace writable access;
-if no workspace is found from the current directory,
-it binds the current directory read-only so rust-analyzer can still start.
-Both wrappers bind Cargo home writable and rustup home read-only when those directories exist.
+Its filesystem grants are the Cargo expansion grants described above:
+from a workspace member, the workspace is readable while the current directory
+and workspace `target` are writable;
+outside a workspace, only tool-home grants are added.
 
 The Rust wrappers pass `+E` to `skn` for compatibility with Rust toolchains,
 Cargo configuration, and project-specific build setups.
 Build scripts, proc macros, tests,
 and related subprocesses may therefore be able to read environment variables containing secrets.
-A writable Cargo home may expose registry credentials
-and allow persistent changes to Cargo configuration and cache state.
+Cargo home is readable, so Cargo configuration and credential files may be exposed.
+Cargo registry and Git cache directories are writable, so Cargo may persist
+changes to downloaded dependency state.
 If Cargo registry credentials are needed,
 prefer [global credential providers](https://doc.rust-lang.org/cargo/reference/registry-authentication.html)
 over storing tokens directly in Cargo home.

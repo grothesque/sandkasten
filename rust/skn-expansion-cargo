@@ -1,0 +1,127 @@
+#!/bin/bash
+#
+# Emit skn options for working in a Cargo context from the current directory.
+#
+# The output protocol is one complete skn option argument per line, suitable
+# for `skn ... +X cargo`. This helper intentionally handles only filesystem and
+# toolchain context grants; command policy such as network/offline behavior
+# belongs in wrappers such as skn-cargo and skn-rust-analyzer.
+
+set -euo pipefail
+
+progname=skn-expansion-cargo
+
+error() {
+    echo "$progname: $*" >&2
+    exit 2
+}
+
+normalize_path() {
+    realpath -s -m -- "$1"
+}
+
+emit_arg() {
+    local arg
+
+    for arg; do
+        [[ $arg != *$'\n'* ]] || error "cannot emit argument containing newline"
+        printf '%s\n' "$arg"
+    done
+}
+
+locate_workspace_manifest() {
+    local locate_stderr status
+
+    locate_stderr=$(mktemp) || exit 2
+
+    if workspace_manifest=$({
+        if [[ -z ${SKN_REAL_CARGO:-} ]]; then
+            # If Cargo resolves to skn-cargo, force its recursion-depth guard to
+            # fail immediately with a clear diagnostic instead of nesting
+            # wrappers while trying to locate the workspace.
+            export SKN_CARGO_WRAPPER_DEPTH=${SKN_CARGO_WRAPPER_MAX_DEPTH:-5}
+        fi
+        "$real_cargo" locate-project --workspace --message-format=plain
+    } 2>"$locate_stderr"); then
+        rm -f -- "$locate_stderr"
+        [[ -n $workspace_manifest ]] || return 1
+        return 0
+    else
+        status=$?
+    fi
+
+    if grep -F 'recursive Cargo wrapper invocation' "$locate_stderr" >/dev/null; then
+        cat "$locate_stderr" >&2
+        rm -f -- "$locate_stderr"
+        exit 2
+    fi
+
+    case $status in
+        126|127)
+            cat "$locate_stderr" >&2
+            rm -f -- "$locate_stderr"
+            error "could not run Cargo command: $real_cargo"
+            ;;
+    esac
+
+    rm -f -- "$locate_stderr"
+    return 1
+}
+
+emit_tool_home_grants() {
+    local cargo_home cargo_home_set=0 rustup_home rustup_home_set=0
+
+    if [[ -v CARGO_HOME ]]; then
+        cargo_home=$CARGO_HOME
+        cargo_home_set=1
+    else
+        cargo_home=${HOME:+$HOME/.cargo}
+    fi
+
+    if [[ -n ${cargo_home:-} && -e $cargo_home ]]; then
+        cargo_home=$(normalize_path "$cargo_home") || error "could not normalize CARGO_HOME: $cargo_home"
+        if ((cargo_home_set)); then
+            emit_arg +V "CARGO_HOME=$cargo_home"
+        fi
+        mkdir -p -- "$cargo_home/registry" "$cargo_home/git" ||
+            error "could not create Cargo cache directories under: $cargo_home"
+        emit_arg +R "$cargo_home"
+        emit_arg +W "$cargo_home/registry"
+        emit_arg +W "$cargo_home/git"
+    fi
+
+    if [[ -v RUSTUP_HOME ]]; then
+        rustup_home=$RUSTUP_HOME
+        rustup_home_set=1
+    else
+        rustup_home=${HOME:+$HOME/.rustup}
+    fi
+
+    if [[ -n ${rustup_home:-} && -e $rustup_home ]]; then
+        rustup_home=$(normalize_path "$rustup_home") || error "could not normalize RUSTUP_HOME: $rustup_home"
+        if ((rustup_home_set)); then
+            emit_arg +V "RUSTUP_HOME=$rustup_home"
+        fi
+        emit_arg +R "$rustup_home"
+    fi
+}
+
+real_cargo=${SKN_REAL_CARGO:-cargo}
+cwd=$(normalize_path "$PWD") || error "could not normalize current directory: $PWD"
+
+if locate_workspace_manifest; then
+    workspace_root=$(dirname -- "$workspace_manifest") || exit 2
+    workspace_root=$(normalize_path "$workspace_root") || error "could not normalize workspace root: $workspace_root"
+    target_dir=$workspace_root/target
+    mkdir -p -- "$target_dir" || error "could not create workspace target directory: $target_dir"
+
+    if [[ $cwd == "$workspace_root" ]]; then
+        emit_arg +W "$workspace_root"
+    else
+        emit_arg +R "$workspace_root"
+        emit_arg +W "$target_dir"
+        emit_arg +W "$cwd"
+    fi
+fi
+
+emit_tool_home_grants

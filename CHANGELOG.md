@@ -8,6 +8,10 @@
   with network access.
 - Add `+X NAME` expansions: trusted `skn-expansion-NAME` helpers can emit
   reusable groups of `skn` options, one argument per line.
+- Add `rust/skn-expansion-cargo`, an inspectable `+X cargo` expansion for
+  narrow Cargo workspace, cache, and toolchain grants.
+- `skn-cargo` and `skn-rust-analyzer` now use `skn-expansion-cargo` for
+  narrower Cargo-context filesystem and toolchain grants.
 - Improve compatibility of `with-tty` with arbitrary user `.tmux.conf`:
   limit given tmux options to essentials;
   make detachment prevention more robust and less intrusive.

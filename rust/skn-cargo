@@ -46,35 +46,6 @@ fi
 
 export SKN_CARGO_WRAPPER_DEPTH=$((10#$cargo_wrapper_depth + 1))
 
-locate_workspace_manifest() {
-    local cargo_cwd=$1
-    local use_cargo_cwd=$2
-    local locate_stderr status
-
-    locate_stderr=$(mktemp) || exit 2
-
-    if workspace_manifest=$({
-        if ((use_cargo_cwd)); then
-            cd -- "$cargo_cwd" || exit
-        fi
-        "$real_cargo" locate-project --workspace --message-format=plain
-    } 2>"$locate_stderr"); then
-        rm -f -- "$locate_stderr"
-        return 0
-    else
-        status=$?
-    fi
-
-    if grep -F 'recursive Cargo wrapper invocation' "$locate_stderr" >/dev/null; then
-        cat "$locate_stderr" >&2
-        rm -f -- "$locate_stderr"
-        exit "$status"
-    fi
-
-    rm -f -- "$locate_stderr"
-    return 1
-}
-
 # Parses skn’s +0 machine-readable info. This delegates option parsing to skn
 # itself instead of mirroring skn’s option grammar here.
 parse_skn_info() {
@@ -395,35 +366,24 @@ apply_network_policy() {
     return 0
 }
 
-collect_workspace_and_creation_binds() {
+collect_cargo_context_args() {
+    local cargo_effective_cwd output
+
+    if ! cargo_effective_cwd=$(absolute_from_cargo_cwd .); then
+        echo "$progname: could not determine Cargo working directory" >&2
+        exit 2
+    fi
+
+    if output=$(cd -- "$cargo_effective_cwd" && skn-expansion-cargo); then
+        cargo_context_args=()
+        [[ -z $output ]] || mapfile -t cargo_context_args <<<"$output"
+    else
+        exit $?
+    fi
+
     if find_cargo_creation_bind; then
-        cargo_binds+=(+W "$cargo_creation_bind")
+        cargo_context_args+=(+W "$cargo_creation_bind")
     fi
-
-    if locate_workspace_manifest "$cargo_cwd" "$cargo_has_cwd"; then
-        cargo_binds+=(+W "$(dirname -- "$workspace_manifest")")
-    fi
-
-    return 0
-}
-
-collect_tool_home_binds() {
-    local cargo_home rustup_home
-
-    # If they exist, make cargo home writable and rustup home readable.
-    cargo_home=${CARGO_HOME:-${HOME:+$HOME/.cargo}}
-    [[ -n $cargo_home && -e $cargo_home ]] && cargo_binds+=(+W "$cargo_home")
-
-    rustup_home=${RUSTUP_HOME:-${HOME:+$HOME/.rustup}}
-    [[ -n $rustup_home && -e $rustup_home ]] && cargo_binds+=(+R "$rustup_home")
-
-    return 0
-}
-
-collect_cargo_binds() {
-    cargo_binds=()
-    collect_workspace_and_creation_binds
-    collect_tool_home_binds
 }
 
 run_cargo_once() {
@@ -485,7 +445,7 @@ run_cargo_with_prefetch() {
         "$real_cargo"
         "${skn_argv[@]}"
         +N
-        "${cargo_binds[@]}"
+        "${cargo_context_args[@]}"
     )
 
     "${fetch_skn_args[@]}" ++ "${cargo_fetch_argv[@]}"
@@ -497,8 +457,8 @@ real_cargo=${SKN_REAL_CARGO:-cargo}
 init_skn_args
 parse_wrapper_args "$@"
 apply_network_policy
-collect_cargo_binds
-skn_args+=("${cargo_binds[@]}")
+collect_cargo_context_args
+skn_args+=("${cargo_context_args[@]}")
 if auto_prefetch_cargo_command; then
     run_cargo_with_prefetch "$@"
 else

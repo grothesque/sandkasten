@@ -20,11 +20,10 @@
 # can execute build scripts, proc macros, tests, and other project code through
 # Cargo subprocesses.
 #
-# The detected Cargo workspace is bound writable because rust-analyzer and cargo
-# may need to write target files and other workspace-local state. If no Cargo
-# workspace is detected, the current directory is bound read-only so
-# rust-analyzer can still start with its usual no-workspace behavior without
-# giving write access to an arbitrary launch directory.
+# Filesystem and toolchain grants are provided by skn-expansion-cargo. In a
+# workspace member, the workspace is readable while the current directory and
+# workspace target directory are writable; outside a workspace, only tool-home
+# grants are added.
 
 set -euo pipefail
 
@@ -38,26 +37,15 @@ if [[ ${SKN_RUST_ANALYZER_WRAPPER_ACTIVE:-} == 1 ]]; then
 fi
 export SKN_RUST_ANALYZER_WRAPPER_ACTIVE=1
 
-locate_workspace_manifest() {
-    local locate_stderr status
+collect_cargo_context_args() {
+    local output
 
-    locate_stderr=$(mktemp) || exit 2
-
-    if workspace_manifest=$("$real_cargo" locate-project --workspace --message-format=plain 2>"$locate_stderr"); then
-        rm -f -- "$locate_stderr"
-        return 0
+    if output=$(skn-expansion-cargo); then
+        cargo_context_args=()
+        [[ -z $output ]] || mapfile -t cargo_context_args <<<"$output"
     else
-        status=$?
+        exit $?
     fi
-
-    if grep -F 'recursive Cargo wrapper invocation' "$locate_stderr" >/dev/null; then
-        cat "$locate_stderr" >&2
-        rm -f -- "$locate_stderr"
-        exit "$status"
-    fi
-
-    rm -f -- "$locate_stderr"
-    return 1
 }
 
 # Parses skn’s +0 machine-readable info. This delegates option parsing to skn
@@ -92,12 +80,6 @@ network_enabled_from_skn_info() {
 real_rust_analyzer=${SKN_REAL_RUST_ANALYZER:-rust-analyzer}
 real_cargo=${SKN_REAL_CARGO:-cargo}
 
-if [[ -z ${SKN_REAL_CARGO:-} ]]; then
-    # If Cargo resolves to skn-cargo while locating the workspace, force its
-    # recursion-depth guard to fail immediately with a clear diagnostic.
-    export SKN_CARGO_WRAPPER_DEPTH=${SKN_CARGO_WRAPPER_MAX_DEPTH:-5}
-fi
-
 skn_args=(
     skn
     "$real_rust_analyzer"
@@ -105,28 +87,22 @@ skn_args=(
     +V "CARGO=$real_cargo"
 )
 
-if locate_workspace_manifest; then
-    skn_args+=(+W "$(dirname -- "$workspace_manifest")")
-else
-    skn_args+=(+R "$(pwd)")
-fi
-
-# If they exist, make cargo home writable and rustup home readable.
-cargo_home=${CARGO_HOME:-${HOME:+$HOME/.cargo}}
-[[ -n $cargo_home && -e $cargo_home ]] && skn_args+=(+W "$cargo_home")
-
-rustup_home=${RUSTUP_HOME:-${HOME:+$HOME/.rustup}}
-[[ -n $rustup_home && -e $rustup_home ]] && skn_args+=(+R "$rustup_home")
-
 if network_enabled_from_skn_info < <("${skn_args[@]}" +0 "$@"); then
     echo "$progname: refusing +N: rust-analyzer can execute project code via Cargo subprocesses" >&2
     echo "$progname: fetch dependencies separately, for example with skn-cargo fetch, then run rust-analyzer offline" >&2
     exit 2
 else
     case $? in
-        1) skn_args+=(+V CARGO_NET_OFFLINE=true) ;;
+        1) ;;
         *) echo "$progname: internal error parsing skn +0 output" >&2; exit 2 ;;
     esac
 fi
+
+collect_cargo_context_args
+
+skn_args+=(
+    "${cargo_context_args[@]}"
+    +V CARGO_NET_OFFLINE=true
+)
 
 exec "${skn_args[@]}" "$@"

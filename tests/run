@@ -10,6 +10,7 @@ shell_files=(
     ./with-tty
     ./skn-baseline-path-check
     ./rust/skn-cargo
+    ./rust/skn-expansion-cargo
     ./rust/skn-rust-analyzer
     ./tests/run
     ./tests/helpers/common.bash

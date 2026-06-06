@@ -205,14 +205,15 @@ assert_final_invocation_count() {
     fi
 }
 
-@test 'skn-cargo adds offline mode and writable workspace when network is disabled' {
+@test 'skn-cargo adds offline mode and narrow workspace grants when network is disabled' {
     workspace="$BATS_TEST_TMPDIR/workspace"
-    mkdir -p "$workspace"
+    member="$workspace/member"
+    mkdir -p "$member"
     touch "$workspace/Cargo.toml"
     export FAKE_CARGO_LOCATE=success
     export FAKE_WORKSPACE_MANIFEST="$workspace/Cargo.toml"
 
-    run "$SKN_CARGO" build
+    run_skn_cargo_in "$member" build
     assert_success
 
     info_args="$BATS_TEST_TMPDIR/info.lines"
@@ -223,7 +224,9 @@ assert_final_invocation_count() {
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
     assert_args_contain "$args" 'cargo'
     assert_args_contain "$args" '+E'
-    assert_args_contain_pair "$args" '+W' "$workspace"
+    assert_args_contain_pair "$args" '+R' "$workspace"
+    assert_args_contain_pair "$args" '+W' "$workspace/target"
+    assert_args_contain_pair "$args" '+W' "$member"
     assert_args_contain_pair "$args" '+V' 'CARGO_NET_OFFLINE=true'
     assert_args_not_contain_env "$args" CARGO
     assert_args_not_contain_env "$args" PATH
@@ -232,18 +235,21 @@ assert_final_invocation_count() {
 
 @test 'skn-cargo auto-prefetches cargo build before running build offline' {
     workspace="$BATS_TEST_TMPDIR/prefetch-workspace"
-    mkdir -p "$workspace"
+    member="$workspace/member"
+    mkdir -p "$member"
     touch "$workspace/Cargo.toml"
     export FAKE_CARGO_LOCATE=success
     export FAKE_WORKSPACE_MANIFEST="$workspace/Cargo.toml"
 
-    run "$SKN_CARGO" +V RUSTFLAGS=-Dwarnings build
+    run_skn_cargo_in "$member" +V RUSTFLAGS=-Dwarnings build
     assert_success
     assert_final_invocation_count 2
 
     read_final_invocation_args 1 fetch
     assert_args_contain "$args" '+N'
-    assert_args_contain_pair "$args" '+W' "$workspace"
+    assert_args_contain_pair "$args" '+R' "$workspace"
+    assert_args_contain_pair "$args" '+W' "$workspace/target"
+    assert_args_contain_pair "$args" '+W' "$member"
     assert_args_contain "$args" 'fetch'
     assert_args_not_contain "$args" 'build'
     assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
@@ -251,7 +257,9 @@ assert_final_invocation_count() {
 
     read_final_invocation_args 2 build
     assert_args_not_contain "$args" '+N'
-    assert_args_contain_pair "$args" '+W' "$workspace"
+    assert_args_contain_pair "$args" '+R' "$workspace"
+    assert_args_contain_pair "$args" '+W' "$workspace/target"
+    assert_args_contain_pair "$args" '+W' "$member"
     assert_args_contain_pair "$args" '+V' 'CARGO_NET_OFFLINE=true'
     assert_args_contain_pair "$args" '+V' 'RUSTFLAGS=-Dwarnings'
     assert_args_contain "$args" 'build'
@@ -537,7 +545,7 @@ assert_final_invocation_count() {
     run_skn_cargo_in "$launch" init --help
     assert_success
     read_final_args final-init-help
-    assert_args_not_contain "$args" '+W'
+    assert_args_not_contain "$args" "$launch"
 }
 
 @test 'skn-cargo enables network automatically for safe registry and dependency subcommands' {
@@ -815,7 +823,7 @@ assert_final_invocation_count() {
     assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
 }
 
-@test 'skn-cargo adds home binds as explicit skn options when present' {
+@test 'skn-cargo adds narrow home binds as explicit skn options when present' {
     mkdir -p "$HOME/.cargo" "$HOME/.rustup"
 
     run "$SKN_CARGO" build
@@ -823,8 +831,12 @@ assert_final_invocation_count() {
 
     args="$BATS_TEST_TMPDIR/final.lines"
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
-    assert_args_contain_pair "$args" '+W' "$HOME/.cargo"
+    assert_args_contain_pair "$args" '+R' "$HOME/.cargo"
+    assert_args_contain_pair "$args" '+W' "$HOME/.cargo/registry"
+    assert_args_contain_pair "$args" '+W' "$HOME/.cargo/git"
     assert_args_contain_pair "$args" '+R' "$HOME/.rustup"
+    assert_file_exists "$HOME/.cargo/registry"
+    assert_file_exists "$HOME/.cargo/git"
 }
 
 @test 'skn-cargo uses SKN_REAL_CARGO and exports CARGO only when set' {
@@ -950,7 +962,8 @@ EOF
 
     run "$SKN_RUST_ANALYZER" --stdio
     assert_status 2
-    [[ ! -e $FAKE_SKN_INFO_ARGS ]]
+    assert_output_contains 'recursive Cargo wrapper invocation'
+    [[ -e $FAKE_SKN_INFO_ARGS ]]
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 }
 
@@ -974,6 +987,7 @@ EOF
     assert_status 2
     assert_output_contains 'refusing +N'
     assert_output_contains 'skn-cargo fetch'
+    [[ ! -e $FAKE_CARGO_LOCATE_CWD ]]
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 }
 
@@ -997,24 +1011,27 @@ EOF
     assert_success
 }
 
-@test 'skn-rust-analyzer binds detected workspaces writable' {
+@test 'skn-rust-analyzer uses narrow Cargo workspace grants' {
     workspace="$BATS_TEST_TMPDIR/ra-workspace"
-    mkdir -p "$workspace"
+    member="$workspace/member"
+    mkdir -p "$member"
     touch "$workspace/Cargo.toml"
     export FAKE_CARGO_LOCATE=success
     export FAKE_WORKSPACE_MANIFEST="$workspace/Cargo.toml"
 
-    run "$SKN_RUST_ANALYZER" --stdio
+    run bash -c 'cd "$1" && "$2" --stdio' _ "$member" "$SKN_RUST_ANALYZER"
     assert_success
 
     args="$BATS_TEST_TMPDIR/final.lines"
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
     assert_args_contain "$args" 'rust-analyzer'
-    assert_args_contain_pair "$args" '+W' "$workspace"
+    assert_args_contain_pair "$args" '+R' "$workspace"
+    assert_args_contain_pair "$args" '+W' "$workspace/target"
+    assert_args_contain_pair "$args" '+W' "$member"
     assert_args_contain_pair "$args" '+V' 'CARGO_NET_OFFLINE=true'
 }
 
-@test 'skn-rust-analyzer falls back to read-only cwd outside Cargo workspaces' {
+@test 'skn-rust-analyzer adds no cwd grant outside Cargo workspaces' {
     launch="$BATS_TEST_TMPDIR/no-workspace"
     mkdir -p "$launch"
     export FAKE_CARGO_LOCATE=fail
@@ -1024,6 +1041,5 @@ EOF
 
     args="$BATS_TEST_TMPDIR/final.lines"
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
-    assert_args_contain_pair "$args" '+R' "$launch"
-    assert_args_not_contain "$args" '+W'
+    assert_args_not_contain "$args" "$launch"
 }
