@@ -17,6 +17,11 @@ set -euo pipefail
 # would become too confusing.
 progname=skn-cargo
 
+error() {
+    echo "$progname: $*" >&2
+    exit 2
+}
+
 # Space-padded subcommand policy lists.
 # Subcommands in net_auto_subcommands get network automatically because they are
 # expected to need it without building or executing project code. Subcommands in
@@ -29,20 +34,14 @@ auto_prefetch_subcommands=' b bench build c check clippy d doc r run t test '
 cargo_wrapper_max_depth=${SKN_CARGO_WRAPPER_MAX_DEPTH:-5}
 cargo_wrapper_depth=${SKN_CARGO_WRAPPER_DEPTH:-0}
 
-if [[ ! $cargo_wrapper_max_depth =~ ^[1-9][0-9]*$ ]]; then
-    echo "$progname: invalid SKN_CARGO_WRAPPER_MAX_DEPTH: $cargo_wrapper_max_depth" >&2
-    exit 2
-fi
+[[ $cargo_wrapper_max_depth =~ ^[1-9][0-9]*$ ]] ||
+    error "invalid SKN_CARGO_WRAPPER_MAX_DEPTH: $cargo_wrapper_max_depth"
 
-if [[ ! $cargo_wrapper_depth =~ ^[0-9]+$ ]]; then
-    echo "$progname: invalid SKN_CARGO_WRAPPER_DEPTH: $cargo_wrapper_depth" >&2
-    exit 2
-fi
+[[ $cargo_wrapper_depth =~ ^[0-9]+$ ]] ||
+    error "invalid SKN_CARGO_WRAPPER_DEPTH: $cargo_wrapper_depth"
 
-if ((10#$cargo_wrapper_depth >= 10#$cargo_wrapper_max_depth)); then
-    echo "$progname: recursive Cargo wrapper invocation depth exceeded" >&2
-    exit 2
-fi
+((10#$cargo_wrapper_depth < 10#$cargo_wrapper_max_depth)) ||
+    error "recursive Cargo wrapper invocation depth exceeded"
 
 export SKN_CARGO_WRAPPER_DEPTH=$((10#$cargo_wrapper_depth + 1))
 
@@ -339,10 +338,8 @@ init_skn_args() {
 }
 
 parse_wrapper_args() {
-    if ! parse_skn_info < <("${skn_args[@]}" +0 "$@"); then
-        echo "$progname: internal error parsing skn +0 output" >&2
-        exit 2
-    fi
+    parse_skn_info < <("${skn_args[@]}" +0 "$@") ||
+        error "internal error parsing skn +0 output"
 
     reject_ambiguous_skn_env_options
 }
@@ -357,8 +354,7 @@ apply_network_policy() {
             skn_args+=(+V CARGO_NET_OFFLINE=true)
         fi
     elif ((explicit_network)); then
-        echo "$progname: refusing +N: cannot safely identify Cargo subcommand" >&2
-        exit 2
+        error "refusing +N: cannot safely identify Cargo subcommand"
     else
         skn_args+=(+V CARGO_NET_OFFLINE=true)
     fi
@@ -369,10 +365,8 @@ apply_network_policy() {
 collect_cargo_context_args() {
     local cargo_effective_cwd output
 
-    if ! cargo_effective_cwd=$(absolute_from_cargo_cwd .); then
-        echo "$progname: could not determine Cargo working directory" >&2
-        exit 2
-    fi
+    cargo_effective_cwd=$(absolute_from_cargo_cwd .) ||
+        error "could not determine Cargo working directory"
 
     if output=$(cd -- "$cargo_effective_cwd" && skn-expansion-cargo); then
         cargo_context_args=()
@@ -435,10 +429,8 @@ auto_prefetch_cargo_command() {
 run_cargo_with_prefetch() {
     local -a fetch_skn_args
 
-    if ! construct_prefetch_argv; then
-        echo "$progname: internal error constructing cargo fetch invocation" >&2
-        exit 2
-    fi
+    construct_prefetch_argv ||
+        error "internal error constructing cargo fetch invocation"
 
     fetch_skn_args=(
         skn
