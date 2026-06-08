@@ -172,6 +172,13 @@ Commands that modify Cargo configuration, credentials, or installed binaries,
 such as `cargo login` or `cargo install`, need additional explicit grants
 such as `+W ~/.cargo` or `+W ~/.cargo/bin`.
 
+For tools with rust-analyzer-style Cargo analysis needs,
+use the expansion profile `+X cargo:rust-analyzer`.
+In a Cargo workspace, this grants the workspace read-only and the workspace
+`target` directory writable;
+it does not grant the current package directory writable.
+Tool-home grants are the same as for `+X cargo`.
+
 `skn-cargo` gives dependency-management subcommands such as `fetch` and `update`
 network access automatically.
 Common build-like subcommands such as `build`, `check`, `clippy`, `doc`,
@@ -204,6 +211,9 @@ The filesystem sandbox still applies.
 it refuses network access.
 If dependencies are missing, fetch or build them first with `skn-cargo`,
 then run rust-analyzer offline.
+It uses the `cargo:rust-analyzer` expansion profile,
+so rust-analyzer can read the workspace and write Cargo build/cache state
+without receiving write access to source directories.
 Given current [rust-analyzer design](https://github.com/rust-lang/rust-analyzer/issues/22118),
 rust-analyzer and its Cargo subprocesses need writable Cargo state.
 

@@ -208,6 +208,26 @@ EOF
     assert_output_not_contains '+X'
 }
 
+@test '+X profile passes one argument to the expansion helper' {
+    fake_bin="$BATS_TEST_TMPDIR/bin"
+    mkdir -p "$fake_bin"
+
+    cat >"$fake_bin/skn-expansion-demo" <<'EOF'
+#!/bin/bash
+printf '%s\n' "$#" "$@" >"${PROFILE_ARGS_FILE:?}"
+printf '%s\n' +N
+EOF
+    chmod +x "$fake_bin/skn-expansion-demo"
+
+    run env -u SKN_PATH_CHECK PATH="$fake_bin:$PATH" \
+        PROFILE_ARGS_FILE="$BATS_TEST_TMPDIR/profile.args" \
+        "$SKN" true +S +X demo:profile
+
+    assert_success
+    assert_output_contains 'skn: network enabled'
+    [[ $(<"$BATS_TEST_TMPDIR/profile.args") == $'1\nprofile' ]]
+}
+
 @test '+X expanded options appear in +0 machine info' {
     fake_bin="$BATS_TEST_TMPDIR/bin"
     mkdir -p "$fake_bin"
@@ -249,6 +269,10 @@ EOF
     run env -u SKN_PATH_CHECK "$SKN" true +S +X ../demo
     assert_status 2
     assert_output_contains 'invalid expansion name'
+
+    run env -u SKN_PATH_CHECK "$SKN" true +S +X demo:bad/profile
+    assert_status 2
+    assert_output_contains 'invalid expansion profile'
 
     run env -u SKN_PATH_CHECK "$SKN" true +S +X missing
     assert_status 2

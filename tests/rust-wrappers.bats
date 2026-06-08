@@ -233,6 +233,54 @@ assert_final_invocation_count() {
     assert_args_contain "$args" 'build'
 }
 
+@test 'skn-cargo creates missing workspace lockfile for dependency resolution' {
+    workspace="$BATS_TEST_TMPDIR/lockfile-workspace"
+    member="$workspace/member"
+    mkdir -p "$member"
+    touch "$workspace/Cargo.toml"
+    export FAKE_CARGO_LOCATE=success
+    export FAKE_WORKSPACE_MANIFEST="$workspace/Cargo.toml"
+
+    run_skn_cargo_in "$member" fetch
+    assert_success
+    assert_file_exists "$workspace/Cargo.lock"
+
+    read_final_args final-lockfile
+    assert_args_contain_pair "$args" '+W' "$workspace/Cargo.lock"
+}
+
+@test 'skn-cargo grants lockfile for unclassified subcommands' {
+    workspace="$BATS_TEST_TMPDIR/unclassified-lockfile-workspace"
+    member="$workspace/member"
+    mkdir -p "$member"
+    touch "$workspace/Cargo.toml"
+    export FAKE_CARGO_LOCATE=success
+    export FAKE_WORKSPACE_MANIFEST="$workspace/Cargo.toml"
+
+    run_skn_cargo_in "$member" remove serde
+    assert_success
+    assert_file_exists "$workspace/Cargo.lock"
+
+    read_final_args final-unclassified-lockfile
+    assert_args_contain_pair "$args" '+W' "$workspace/Cargo.lock"
+}
+
+@test 'skn-cargo does not create workspace lockfile when lock updates are forbidden' {
+    workspace="$BATS_TEST_TMPDIR/locked-lockfile-workspace"
+    member="$workspace/member"
+    mkdir -p "$member"
+    touch "$workspace/Cargo.toml"
+    export FAKE_CARGO_LOCATE=success
+    export FAKE_WORKSPACE_MANIFEST="$workspace/Cargo.toml"
+
+    run_skn_cargo_in "$member" fetch --locked
+    assert_success
+    assert_file_not_exists "$workspace/Cargo.lock"
+
+    read_final_args final-locked-lockfile
+    assert_args_not_contain "$args" "$workspace/Cargo.lock"
+}
+
 @test 'skn-cargo auto-prefetches cargo build before running build offline' {
     workspace="$BATS_TEST_TMPDIR/prefetch-workspace"
     member="$workspace/member"
@@ -960,10 +1008,10 @@ EOF
     rm -f "$fake_bin/cargo"
     ln -s "$SKN_CARGO" "$fake_bin/cargo"
 
-    run "$SKN_RUST_ANALYZER" --stdio
+    run env PATH="$REPO_ROOT:$REPO_ROOT/rust:$fake_bin:$PATH" "$SKN_RUST_ANALYZER" --stdio
     assert_status 2
     assert_output_contains 'recursive Cargo wrapper invocation'
-    [[ -e $FAKE_SKN_INFO_ARGS ]]
+    [[ ! -e $FAKE_SKN_INFO_ARGS ]]
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 }
 
@@ -1011,7 +1059,7 @@ EOF
     assert_success
 }
 
-@test 'skn-rust-analyzer uses narrow Cargo workspace grants' {
+@test 'skn-rust-analyzer uses the cargo rust-analyzer expansion profile' {
     workspace="$BATS_TEST_TMPDIR/ra-workspace"
     member="$workspace/member"
     mkdir -p "$member"
@@ -1025,9 +1073,8 @@ EOF
     args="$BATS_TEST_TMPDIR/final.lines"
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
     assert_args_contain "$args" 'rust-analyzer'
-    assert_args_contain_pair "$args" '+R' "$workspace"
-    assert_args_contain_pair "$args" '+W' "$workspace/target"
-    assert_args_contain_pair "$args" '+W' "$member"
+    assert_args_contain_pair "$args" '+X' 'cargo:rust-analyzer'
+    assert_args_not_contain "$args" "$member"
     assert_args_contain_pair "$args" '+V' 'CARGO_NET_OFFLINE=true'
 }
 

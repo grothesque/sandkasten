@@ -3,9 +3,10 @@
 # Emit skn options for working in a Cargo context from the current directory.
 #
 # The output protocol is one complete skn option argument per line, suitable
-# for `skn ... +X cargo`. This helper intentionally handles only filesystem and
-# toolchain context grants; command policy such as network/offline behavior
-# belongs in wrappers such as skn-cargo and skn-rust-analyzer.
+# for `skn ... +X cargo` or `skn ... +X cargo:rust-analyzer`. This helper
+# intentionally handles only filesystem and toolchain context grants; command
+# policy such as network/offline behavior belongs in wrappers such as skn-cargo
+# and skn-rust-analyzer.
 
 set -euo pipefail
 
@@ -14,6 +15,18 @@ progname=skn-expansion-cargo
 error() {
     echo "$progname: $*" >&2
     exit 2
+}
+
+usage() {
+    cat <<EOF
+Usage: $progname [cargo|no-lockfile|rust-analyzer]
+
+Emit skn options for working in a Cargo context from the current directory.
+The default cargo profile grants writable package/workspace access suitable for
+Cargo commands. The no-lockfile profile avoids creating or binding Cargo.lock.
+The rust-analyzer profile grants read-only workspace access plus a writable
+target directory.
+EOF
 }
 
 normalize_path() {
@@ -68,6 +81,46 @@ locate_workspace_manifest() {
     return 1
 }
 
+emit_workspace_lockfile_grant() {
+    local lockfile=$workspace_root/Cargo.lock
+
+    [[ -e $lockfile || -L $lockfile ]] || touch -- "$lockfile" ||
+        error "could not create workspace lockfile: $lockfile"
+    emit_arg +W "$lockfile"
+}
+
+emit_workspace_grants() {
+    case $profile in
+        cargo)
+            if [[ $cwd == "$workspace_root" ]]; then
+                emit_arg +W "$workspace_root"
+            else
+                emit_arg +R "$workspace_root"
+                emit_workspace_lockfile_grant
+                emit_arg +W "$target_dir"
+                emit_arg +W "$cwd"
+            fi
+            ;;
+        no-lockfile)
+            if [[ $cwd == "$workspace_root" ]]; then
+                emit_arg +W "$workspace_root"
+            else
+                emit_arg +R "$workspace_root"
+                emit_arg +W "$target_dir"
+                emit_arg +W "$cwd"
+            fi
+            ;;
+        rust-analyzer)
+            emit_arg +R "$workspace_root"
+            emit_arg +W "$target_dir"
+            ;;
+        *)
+            echo "$progname: internal error: invalid profile: $profile" >&2
+            exit 2
+            ;;
+    esac
+}
+
 emit_tool_home_grants() {
     local cargo_home cargo_home_set=0 rustup_home rustup_home_set=0
 
@@ -106,6 +159,31 @@ emit_tool_home_grants() {
     fi
 }
 
+case $# in
+    0)
+        profile=cargo
+        ;;
+    1)
+        case $1 in
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            *)
+                profile=$1
+                ;;
+        esac
+        ;;
+    *)
+        error "too many arguments"
+        ;;
+esac
+
+case $profile in
+    cargo|no-lockfile|rust-analyzer) ;;
+    *) error "unknown profile: $profile" ;;
+esac
+
 real_cargo=${SKN_REAL_CARGO:-cargo}
 cwd=$(normalize_path "$PWD") || error "could not normalize current directory: $PWD"
 
@@ -115,13 +193,7 @@ if locate_workspace_manifest; then
     target_dir=$workspace_root/target
     mkdir -p -- "$target_dir" || error "could not create workspace target directory: $target_dir"
 
-    if [[ $cwd == "$workspace_root" ]]; then
-        emit_arg +W "$workspace_root"
-    else
-        emit_arg +R "$workspace_root"
-        emit_arg +W "$target_dir"
-        emit_arg +W "$cwd"
-    fi
+    emit_workspace_grants
 fi
 
 emit_tool_home_grants

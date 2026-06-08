@@ -6,10 +6,13 @@
   with network access before running the requested Cargo command offline.
   Cargo offline controls suppress the prefetch; explicit `+N` runs Cargo once
   with network access.
-- Add `+X NAME` expansions: trusted `skn-expansion-NAME` helpers can emit
-  reusable groups of `skn` options, one argument per line.
+- Add `+X NAME[:PROFILE]` expansions:
+  trusted `skn-expansion-NAME` helpers can emit reusable groups of `skn` options,
+  one argument per line.
 - Add `rust/skn-expansion-cargo`, an inspectable `+X cargo` expansion for
-  narrow Cargo workspace, cache, and toolchain grants.
+  narrow Cargo workspace, cache, and toolchain grants,
+  including a `+X cargo:rust-analyzer` profile for rust-analyzer-style
+  workspace analysis.
 - `skn-cargo` and `skn-rust-analyzer` now use `skn-expansion-cargo` for
   narrower Cargo-context filesystem and toolchain grants.
 - Improve compatibility of `with-tty` with arbitrary user `.tmux.conf`:

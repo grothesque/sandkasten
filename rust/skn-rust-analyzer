@@ -20,9 +20,9 @@
 # can execute build scripts, proc macros, tests, and other project code through
 # Cargo subprocesses.
 #
-# Filesystem and toolchain grants are provided by skn-expansion-cargo. In a
-# workspace member, the workspace is readable while the current directory and
-# workspace target directory are writable; outside a workspace, only tool-home
+# Filesystem and toolchain grants are provided by the rust-analyzer profile of
+# skn-expansion-cargo. In a workspace, the workspace is readable and the
+# workspace target directory is writable; outside a workspace, only tool-home
 # grants are added.
 
 set -euo pipefail
@@ -36,17 +36,6 @@ if [[ ${SKN_RUST_ANALYZER_WRAPPER_ACTIVE:-} == 1 ]]; then
     exit 2
 fi
 export SKN_RUST_ANALYZER_WRAPPER_ACTIVE=1
-
-collect_cargo_context_args() {
-    local output
-
-    if output=$(skn-expansion-cargo); then
-        cargo_context_args=()
-        [[ -z $output ]] || mapfile -t cargo_context_args <<<"$output"
-    else
-        exit $?
-    fi
-}
 
 # Parses skn’s +0 machine-readable info. This delegates option parsing to skn
 # itself instead of mirroring skn’s option grammar here.
@@ -98,10 +87,8 @@ else
     esac
 fi
 
-collect_cargo_context_args
-
 skn_args+=(
-    "${cargo_context_args[@]}"
+    +X cargo:rust-analyzer
     +V CARGO_NET_OFFLINE=true
 )
 

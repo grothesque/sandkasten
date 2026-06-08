@@ -43,6 +43,7 @@ EOF
 
     expected=$(printf '%s\n' \
         +R "$workspace" \
+        +W "$workspace/Cargo.lock" \
         +W "$workspace/target" \
         +W "$member")
 
@@ -54,8 +55,34 @@ EOF
 
     assert_success
     [[ $output == "$expected" ]]
+    assert_file_exists "$workspace/Cargo.lock"
     assert_file_exists "$workspace/target"
 }
+
+@test 'skn-expansion-cargo no-lockfile profile avoids lockfile creation and grant' {
+    workspace="$BATS_TEST_TMPDIR/no-lockfile-workspace"
+    member="$workspace/crate-a"
+    home="$BATS_TEST_TMPDIR/no-lockfile-home"
+    mkdir -p "$member" "$home"
+    rm -rf -- "$home/.cargo" "$home/.rustup"
+    touch "$workspace/Cargo.toml"
+
+    expected=$(printf '%s\n' \
+        +R "$workspace" \
+        +W "$workspace/target" \
+        +W "$member")
+
+    run env -u SKN_REAL_CARGO -u CARGO_HOME -u RUSTUP_HOME \
+        HOME="$home" \
+        PATH="$fake_bin:$PATH" \
+        FAKE_WORKSPACE_MANIFEST="$workspace/Cargo.toml" \
+        bash -c 'cd -- "$1" && "$2" no-lockfile' _ "$member" "$SKN_EXPANSION_CARGO"
+
+    assert_success
+    [[ $output == "$expected" ]]
+    assert_file_not_exists "$workspace/Cargo.lock"
+}
+
 
 @test 'skn-expansion-cargo grants the workspace root writable when run there' {
     workspace="$BATS_TEST_TMPDIR/workspace"
@@ -75,6 +102,38 @@ EOF
     assert_success
     [[ $output == "$expected" ]]
     assert_file_exists "$workspace/target"
+}
+
+@test 'skn-expansion-cargo rust-analyzer profile grants read-only workspace plus target' {
+    workspace="$BATS_TEST_TMPDIR/workspace"
+    member="$workspace/crate-a"
+    home="$BATS_TEST_TMPDIR/home"
+    mkdir -p "$member" "$home"
+    rm -rf -- "$home/.cargo" "$home/.rustup"
+    touch "$workspace/Cargo.toml"
+
+    expected=$(printf '%s\n' \
+        +R "$workspace" \
+        +W "$workspace/target")
+
+    run env -u SKN_REAL_CARGO -u CARGO_HOME -u RUSTUP_HOME \
+        HOME="$home" \
+        PATH="$fake_bin:$PATH" \
+        FAKE_WORKSPACE_MANIFEST="$workspace/Cargo.toml" \
+        bash -c 'cd -- "$1" && "$2" rust-analyzer' _ "$member" "$SKN_EXPANSION_CARGO"
+
+    assert_success
+    [[ $output == "$expected" ]]
+    assert_file_exists "$workspace/target"
+
+    run env -u SKN_REAL_CARGO -u CARGO_HOME -u RUSTUP_HOME \
+        HOME="$home" \
+        PATH="$fake_bin:$PATH" \
+        FAKE_WORKSPACE_MANIFEST="$workspace/Cargo.toml" \
+        bash -c 'cd -- "$1" && "$2" rust-analyzer' _ "$workspace" "$SKN_EXPANSION_CARGO"
+
+    assert_success
+    [[ $output == "$expected" ]]
 }
 
 @test 'skn-expansion-cargo emits narrow tool home grants when homes exist' {
@@ -140,5 +199,26 @@ EOF
     assert_output_contains "--ro-bind $workspace $workspace"
     assert_output_contains "--bind $workspace/target $workspace/target"
     assert_output_contains "--bind $member $member"
+    assert_file_exists "$workspace/target"
+}
+
+@test 'skn +X cargo:rust-analyzer uses the rust-analyzer profile' {
+    workspace="$BATS_TEST_TMPDIR/workspace"
+    member="$workspace/crate-a"
+    home="$BATS_TEST_TMPDIR/home"
+    mkdir -p "$member" "$home"
+    rm -rf -- "$home/.cargo" "$home/.rustup"
+    touch "$workspace/Cargo.toml"
+
+    run env -u SKN_PATH_CHECK -u SKN_REAL_CARGO -u CARGO_HOME -u RUSTUP_HOME \
+        HOME="$home" \
+        PATH="$REPO_ROOT/rust:$fake_bin:$PATH" \
+        FAKE_WORKSPACE_MANIFEST="$workspace/Cargo.toml" \
+        bash -c 'cd -- "$1" && "$2" true +S +X cargo:rust-analyzer' _ "$member" "$SKN"
+
+    assert_success
+    assert_output_contains "--ro-bind $workspace $workspace"
+    assert_output_contains "--bind $workspace/target $workspace/target"
+    assert_output_not_contains "--bind $member $member"
     assert_file_exists "$workspace/target"
 }

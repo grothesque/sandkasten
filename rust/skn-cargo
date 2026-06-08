@@ -103,6 +103,25 @@ set_parsed_positional() {
     parsed_arg=$1; parsed_found=1; shift; parsed_tail=("$@")
 }
 
+record_cargo_lock_intent() {
+    case $1 in
+        --offline)
+            # Cargo may still create/update Cargo.lock using cached data.
+            cargo_cli_offline_intent=1
+            ;;
+        --locked)
+            # Cargo must not create/update Cargo.lock.
+            cargo_cli_locked_intent=1
+            ;;
+        --frozen)
+            # Both offline and locked
+            cargo_cli_offline_intent=1
+            cargo_cli_locked_intent=1
+            ;;
+        *) return 1 ;;
+    esac
+}
+
 record_cargo_fetch_top_opt() {
     local arg=$1
 
@@ -185,11 +204,9 @@ parse_cargo_positionals() {
         # Track top-level Cargo offline intent while parsing options. Later
         # split-invocation logic must not prefetch when Cargo was asked to be
         # offline.
-        case $arg in
-            --offline|--frozen)
-                [[ $scope == top ]] && cargo_cli_offline_intent=1
-                ;;
-        esac
+        if [[ $scope == top ]]; then
+            record_cargo_lock_intent "$arg" || :
+        fi
 
         if [[ $arg == -Z?* ]] ||
             word_in "$arg" "$flags" ||
@@ -218,6 +235,7 @@ analyze_cargo_args() {
     cargo_cwd=
     cargo_has_cwd=0
     cargo_cli_offline_intent=0
+    cargo_cli_locked_intent=0
     cargo_fetch_prefix=()
     # Some understood top-level Cargo options, such as --help or --version, do
     # not make sense on a synthetic `cargo fetch` invocation. Keep parsing them
@@ -236,13 +254,8 @@ analyze_cargo_args() {
         cargo_subcommand_args=("${parsed_tail[@]}")
 
         for arg in "${cargo_subcommand_args[@]}"; do
-            case $arg in
-                --) break ;;
-                --offline|--frozen)
-                    cargo_cli_offline_intent=1
-                    break
-                    ;;
-            esac
+            [[ $arg == -- ]] && break
+            record_cargo_lock_intent "$arg" || :
         done
     fi
 
@@ -307,6 +320,19 @@ cargo_has_offline_intent() {
     ((cargo_cli_offline_intent)) || [[ ${CARGO_NET_OFFLINE:-} == true ]]
 }
 
+cargo_lockfile_update_forbidden() {
+    ((cargo_cli_locked_intent))
+}
+
+cargo_context_needs_lockfile_grant() {
+    cargo_lockfile_update_forbidden && return 1
+    ((cargo_fetch_prefix_valid)) || return 1
+    [[ -n $cargo_subcommand ]] || return 1
+    cargo_subcommand_args_have_help_intent "${cargo_subcommand_args[@]}" && return 1
+
+    return 0
+}
+
 reject_skn_cargo_net_offline_env() {
     echo "$progname: do not pass CARGO_NET_OFFLINE through skn +V" >&2
     echo "$progname: use --offline/--frozen, or set CARGO_NET_OFFLINE before invoking $progname" >&2
@@ -364,11 +390,16 @@ apply_network_policy() {
 
 collect_cargo_context_args() {
     local cargo_effective_cwd output
+    local -a expansion_profile_args=()
 
     cargo_effective_cwd=$(absolute_from_cargo_cwd .) ||
         error "could not determine Cargo working directory"
 
-    if output=$(cd -- "$cargo_effective_cwd" && skn-expansion-cargo); then
+    if ! cargo_context_needs_lockfile_grant; then
+        expansion_profile_args=(no-lockfile)
+    fi
+
+    if output=$(cd -- "$cargo_effective_cwd" && skn-expansion-cargo "${expansion_profile_args[@]}"); then
         cargo_context_args=()
         [[ -z $output ]] || mapfile -t cargo_context_args <<<"$output"
     else

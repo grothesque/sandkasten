@@ -50,7 +50,8 @@ Options:
 +V VAR        pass environment VAR into the sandbox if it is set
 +V VAR=VALUE  set environment VAR to VALUE inside the sandbox
 +A ARG        prepend ARG to COMMAND arguments
-+X NAME       expand skn options from skn-expansion-NAME
++X NAME[:PROFILE]
+              expand skn options from skn-expansion-NAME
 +N            enable network access
 +E            preserve caller environment instead of clearing it
 +S            show the sandbox plan after parsing, then exit
@@ -98,6 +99,13 @@ and may be unavailable with setuid bubblewrap.
 `+X NAME` runs the command `skn-expansion-NAME`
 and expands its output into `skn` options to be given in place of `+X NAME`.
 `NAME` must be a simple name that in particular may not contain `/`.
+
+`+X NAME:PROFILE` runs `skn-expansion-NAME PROFILE` instead.
+The profile must also be a simple name;
+its meaning is defined by the expansion helper.
+For example, `+X cargo:rust-analyzer` uses the `rust-analyzer` profile
+of the `cargo` expansion.
+
 An expansion is a trusted helper that prints one complete `skn` argument
 per line.
 For example:
@@ -107,7 +115,8 @@ project
 +W
 project/target
 ```
-The expansion can be inspected by running `skn-expansion-NAME` directly.
+The expansion can be inspected by running `skn-expansion-NAME` directly,
+or `skn-expansion-NAME PROFILE` for a profiled expansion.
 Expansion output is parsed without shell evaluation.
 The line-based protocol cannot represent arguments containing newlines.
 Expansions may emit ordinary sandbox options,
