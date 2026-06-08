@@ -15,7 +15,7 @@ Contents:
 ## Setup
 
 Normal execution requires `SKN_PATH_CHECK` to name a path-check command.
-If you decide to use the included baseline checker as shown in the [README](README.md#installation), set:
+If you decide to use the included baseline checker as shown in the [README](README.md#installation), set
 ```sh
 export SKN_PATH_CHECK=skn-baseline-path-check
 ```
@@ -94,7 +94,7 @@ skn make +T. ++ test
 ```
 
 Bind order matters. To make most of the project transient-writable
-while keeping only `target` persistent, use:
+while keeping only `target` persistent, use
 ```sh
 mkdir -p target
 skn make +T. +W ./target ++ test
@@ -113,7 +113,7 @@ it is a command that is usually run inside an `skn` sandbox.
 Use it for interactive terminal programs that expect to open `/dev/tty` directly
 or need shell job control.
 
-Without it, symptoms can include errors such as:
+Without it, symptoms can include errors such as
 ```text
 emacs: Could not open file: /dev/tty
 ```
