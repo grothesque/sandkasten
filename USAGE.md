@@ -4,32 +4,19 @@ For worked command-line recipes, see [Sandkasten recipes](EXAMPLES.md).
 
 Contents:
 
-- [Setup](#setup)
+- [Installation and setup](#installation-and-setup)
 - [Invoking `skn`](#invoking-skn)
-- [Interactive commands and `with-tty`](#interactive-commands-and-with-tty)
 - [Configuration](#configuration)
+- [Interactive commands and `with-tty`](#interactive-commands-and-with-tty)
 - [Sandbox model](#sandbox-model)
 - [Threat model and non-goals](#threat-model-and-non-goals)
 - [Testing](#testing)
 
-## Setup
+## Installation and setup
 
-Normal execution requires `SKN_PATH_CHECK` to name a path-check command.
-If you decide to use the included baseline checker as shown in the [README](README.md#installation), set
-```sh
-export SKN_PATH_CHECK=skn-baseline-path-check
-```
-
-Use `SKN_RO_BINDS` for directories that you consider part of the read-only base system,
-but which are not included in the default sandbox (review with `+S`).
-For example, after installing Sandkasten helpers in `~/.local/bin`, you likely want:
-```sh
-export SKN_RO_BINDS="$HOME/.local/bin"
-```
-For per-command project and data access, prefer `+R`, `+W`, or `+T`.
-
-See [Path checks](#path-checks) and
-[Additional read-only binds](#additional-read-only-binds) for details.
+This guide assumes that `skn` is on `PATH` and that a path checker has been configured.
+One basic setup is shown in the [README](README.md#installation-and-basic-setup).
+See [Configuration](#configuration) for details.
 
 ## Invoking `skn`
 
@@ -105,6 +92,90 @@ concurrent host-side changes to the underlying directory are not hidden or made 
 `+T` depends on `bubblewrap` and kernel overlayfs support,
 and may be unavailable with setuid bubblewrap.
 
+## Configuration
+
+`skn` is configured through environment variables.
+There are no configuration files.
+
+Normal usage requires `SKN_PATH_CHECK` to name a path-check command.
+There is deliberately no default:
+if the checker is missing or mistyped, `skn` fails rather than running without path checks.
+
+Many users will also want to set `SKN_RO_BINDS` to a colon-separated list of paths (directories or files)
+that they consider part of the read-only base system,
+but which are not included in the default sandbox (review with `+S`).
+
+A basic configuration can be as simple as the one shown in the [README](README.md#installation-and-basic-setup).
+
+### Path checks
+
+`skn` calls the path-check command directly, without shell evaluation,
+with each `+R`, `+W`, or `+T` path as its only argument.
+A non-zero exit rejects the path and causes `skn` to abort.
+
+Path checks are a pragmatic guardrail against user mistakes,
+like running `skn command +R.` while the current directory is `$HOME`.
+The explicit `+R`, `+W`, or `+T` options are still the user's access grants,
+so the baseline checker is intentionally conservative about false positives.
+
+The included [`skn-baseline-path-check`](skn-baseline-path-check)
+implements a baseline policy for typical personal use:
+it allows ordinary descendants of `$HOME` and `/tmp`,
+but rejects broad grants such as `$HOME` itself and paths whose written or
+symlink-resolved form is not readable by “other”.
+This typically rejects broad private grants such as `~/.ssh` itself,
+while still allowing explicitly named descendant paths that pass the final-path
+readability check, for example `~/.ssh/authorized_keys` when that file is
+world-readable.
+
+If this policy fits, set
+```sh
+export SKN_PATH_CHECK=skn-baseline-path-check
+```
+Otherwise adapt or replace the checker.
+
+For tests,
+or as a one-off bypass for a false positive from the configured checker,
+use the standard `true` command as an always-succeeding checker:
+```sh
+SKN_PATH_CHECK=true skn COMMAND ...
+```
+Bypassing path checks permanently is not recommended.
+
+### Base filesystem binds
+
+By default, `skn` creates read-only binds to essential parts of the filesystem
+such as `/usr`, `/bin`, `/lib`, and a few parts of `/etc`.
+The exact binds can be verified using `+S`.
+
+The environment variable `SKN_RO_BINDS` can be used to add
+additional paths (directories or files) to the default list of base system read-only binds.
+The value must be a colon-separated list of absolute paths, for example:
+```sh
+export SKN_RO_BINDS="$HOME/.local/bin:$HOME/.npm-global"
+```
+Since `SKN_RO_BINDS` is meant for stable configuration of the base sandbox,
+the paths are not checked by `SKN_PATH_CHECK`.
+`SKN_RO_BINDS` entries that do not correspond to an existing path are ignored.
+
+Use `+R`, `+W`, or `+T` for per-command filesystem binds.
+
+### Base environment
+
+Unless the `+E` option is given, `skn` mostly clears the environment.
+A few essential variables are passed through by default:
+`PATH`, `HOME`, `USER`, `LOGNAME`, `TERM`, `COLORTERM`, `LANG`, and `LC_*`.
+
+To pass additional variables as part of the base environment,
+set `SKN_PASS_VARS` to a colon-separated list of environment variable names.
+For example:
+```sh
+export SKN_PASS_VARS=PYTHONPATH:NPM_CONFIG_PREFIX
+```
+
+Use `+V` for per-command environment grants.
+Unlike `SKN_PASS_VARS`, `+V` also allows assigning new values.
+
 ## Interactive commands and `with-tty`
 
 `with-tty` is an independent helper script shipped with Sandkasten.
@@ -154,70 +225,6 @@ set-option -g extended-keys on
 set-option -g extended-keys-format csi-u
 ```
 
-## Configuration
-
-`skn` is configured through environment variables.
-There are no configuration files.
-The most important setting is `SKN_PATH_CHECK`.
-
-### Path checks
-
-For normal execution, `SKN_PATH_CHECK` must name a path-check command.
-There is deliberately no default:
-if it is missing or mistyped, `skn` fails rather than running without path checks.
-
-`skn` calls this command directly, without shell evaluation,
-with each `+R`, `+W`, or `+T` path as its only argument.
-A non-zero exit rejects the path and causes `skn` to abort.
-
-Path checks are a pragmatic guardrail against user mistakes,
-like running `skn command +R.` while the current directory is `$HOME`.
-The explicit `+R`, `+W`, or `+T` options are still the user's access grants,
-so the baseline checker is intentionally conservative about false positives.
-
-The included [`skn-baseline-path-check`](skn-baseline-path-check)
-implements a baseline policy for typical personal use:
-it allows ordinary descendants of `$HOME` and `/tmp`,
-but rejects broad grants such as `$HOME` itself and paths whose written or
-symlink-resolved form is not readable by “other”.
-This typically rejects broad private grants such as `~/.ssh` itself,
-while still allowing explicitly named descendant paths that pass the final-path
-readability check, for example `~/.ssh/authorized_keys` when that file is
-world-readable.
-Use it unchanged if this policy fits; otherwise adapt or replace it.
-
-For tests and throw-away experiments,
-you can explicitly select a checker that always succeeds:
-```sh
-export SKN_PATH_CHECK=true
-```
-Do not use that as your normal setup.
-
-### Additional read-only binds
-
-Set `SKN_RO_BINDS` to a colon-separated list of absolute paths to bind read-only when present.
-For example:
-```sh
-export SKN_RO_BINDS="$HOME/.rustup:$HOME/.cargo/bin"
-```
-
-`SKN_RO_BINDS` entries must be absolute paths.
-Missing entries are ignored.
-They come from user configuration and are not checked by `SKN_PATH_CHECK`.
-Use this for stable baseline visibility, not per-command access grants;
-use `+R` for those.
-
-### Additional passed variables
-
-Set `SKN_PASS_VARS` to a colon-separated list of environment variable names to pass when set.
-For example:
-```sh
-export SKN_PASS_VARS=PYTHONPATH:SSH_AUTH_SOCK:DISPLAY
-```
-
-`SKN_PASS_VARS` entries must be variable names, not assignments.
-Use `+V VAR` or `+V VAR=VALUE` for per-command environment grants.
-
 ## Sandbox model
 
 `skn` is deliberately simpler than `bwrap`.
@@ -243,8 +250,10 @@ DNS resolver configuration and common TLS certificate locations are added only w
 Host-specific name overrides such as `/etc/hosts` are not exposed automatically;
 bind that configuration explicitly if a command needs it.
 
-The environment is mostly cleared by default.
-Use `+V`, `+E`, or `SKN_PASS_VARS` when environment access is needed.
+Environment visibility and filesystem visibility are separate:
+a directory named in `PATH` is usable only if it is also visible inside the sandbox,
+for example through the default system binds, `SKN_RO_BINDS`, or an explicit bind.
+Use `+V`, `+E`, or `SKN_PASS_VARS` when additional environment access is needed.
 
 The exact built-in bind list is intentionally an implementation detail;
 inspect `./skn` or use `+S` to see the current plan.

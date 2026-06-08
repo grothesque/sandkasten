@@ -41,7 +41,7 @@ untrusted +N arg
 ```
 
 Normal execution requires a configured path check;
-see [Installation](#installation).
+see [Installation and basic setup](#installation-and-basic-setup).
 
 ## Default sandbox
 
@@ -57,14 +57,15 @@ By default, the sandbox has
 ## Try it without installing
 
 `skn` is a Bash script.
+For it to work,
+the [`bwrap`](https://github.com/containers/bubblewrap) command must be available.
+
 To try it out, run from the Sandkasten directory:
 ```sh
 export SKN_PATH_CHECK=./skn-baseline-path-check
-./skn wc +R. -l README.md
-./skn touch +R. README.md
+./skn wc +R. -l README.md    # will succeed
+./skn touch +R. README.md    # will fail
 ```
-For the above to work,
-the [`bwrap`](https://github.com/containers/bubblewrap) command must be available.
 
 Note that the first argument must be the command to be run,
 optionally followed by skn options and then command arguments.
@@ -74,7 +75,7 @@ and `-l README.md` or `README.md` are command arguments.
 
 Running `wc -l README.md` will succeed,
 but `touch README.md` will fail because the current directory was bound read-only with `+R.`.
-If that was changed to `+W.`, touch would succeed as well.
+If `+W.` was used instead, touch would succeed as well.
 
 To inspect the sandbox, add `+S`.
 This prints the sandbox plan, including the `bwrap` command that would be run,
@@ -85,26 +86,23 @@ To explore the sandbox interactively, replace the command with a shell:
 ./skn bash +R.
 ```
 
-`SKN_PATH_CHECK` names a path-check command.
-`skn` calls it before accepting paths passed to `+R`, `+W`, or `+T`;
-this is a guardrail against accidentally exposing too much of the host filesystem.
+The environment variable `SKN_PATH_CHECK` names a path-check command.
+`skn` calls it once for each path passed via `+R`, `+W`, or `+T`,
+with the path as its sole argument.
+This is a guardrail against accidentally exposing too much of the host filesystem.
 There is deliberately no built-in default:
 if the variable is missing or mistyped,
 `skn` fails instead of silently running without this guardrail.
 The included [`skn-baseline-path-check`](skn-baseline-path-check) is a baseline checker for typical personal use.
 
-## Installation
+## Installation and basic setup
 
-`skn` is a single-file Bash script.
-It requires the [`bwrap`](https://github.com/containers/bubblewrap) command.
-
-Install `skn`, the included baseline path checker,
-and the optional `with-tty` helper in a directory on `PATH`:
+Copy `skn`, the included baseline path checker,
+and the optional `with-tty` helper to a directory on `PATH`, for example:
 ```sh
 mkdir -p ~/.local/bin
 install skn skn-baseline-path-check with-tty ~/.local/bin/
 ```
-Ensure `~/.local/bin` is on `PATH`, or use another install directory that is.
 
 Then add basic setup to your shell startup file:
 ```sh
@@ -112,13 +110,22 @@ export SKN_PATH_CHECK=skn-baseline-path-check
 export SKN_RO_BINDS="$HOME/.local/bin"
 ```
 
-`SKN_RO_BINDS` makes installed helpers such as `with-tty` visible inside sandboxes.
-If you install them somewhere else, bind that directory instead.
-Missing `SKN_RO_BINDS` entries are ignored.
+In order to provide a usable minimal default sandbox,
+`skn` makes essential parts of the host filesystem such as `/usr` readable in the sandbox by default.
+Likewise, a few essential environment variables such as `PATH`, `HOME`, `USER`,
+and terminal/locale settings are passed through by default,
+while the rest of the environment is cleared.
 
-The included checker rejects broad or surprising path grants;
+This base sandbox is intentionally cautious
+and may need a few additional read-only binds for user-installed tools.
+This is done by setting the environment variable `SKN_RO_BINDS`
+to a colon-separated list of absolute paths.
+In particular, if a command in `PATH` is installed outside the default binds,
+make sure that all necessary files are available inside the sandbox.
+
+The included checker rejects broad or surprising path binds specified by `+R`, `+W`, or `+T`;
 use it unchanged if that policy fits, otherwise adapt or replace it.
-See [Setup](USAGE.md#setup) and [Path checks](USAGE.md#path-checks).
+See [Installation and setup](USAGE.md#installation-and-setup) and [Path checks](USAGE.md#path-checks).
 
 ## Documentation
 
