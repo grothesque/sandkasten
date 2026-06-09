@@ -44,6 +44,7 @@ if ((has_info)); then
     exit 0
 fi
 
+final_status=${FAKE_SKN_FINAL_STATUS:-0}
 if [[ -n ${FAKE_SKN_FINAL_ARGS_PREFIX:-} ]]; then
     count_file="$FAKE_SKN_FINAL_ARGS_PREFIX.count"
     if [[ -e $count_file ]]; then
@@ -54,10 +55,30 @@ if [[ -n ${FAKE_SKN_FINAL_ARGS_PREFIX:-} ]]; then
     count=$((count + 1))
     printf '%s\n' "$count" >"$count_file"
     printf '%s\0' "$@" >"$FAKE_SKN_FINAL_ARGS_PREFIX.$count.args"
+
+    if [[ ${FAKE_SKN_FINAL_FAIL_AT:-} == "$count" ]]; then
+        final_status=${FAKE_SKN_FINAL_FAIL_STATUS:-64}
+    fi
 fi
 
 printf '%s\0' "$@" >"${FAKE_SKN_FINAL_ARGS:?}"
-exit "${FAKE_SKN_FINAL_STATUS:-0}"
+
+if ((final_status != 0)); then
+    exit "$final_status"
+fi
+
+if [[ ${1##*/} == rustc ]]; then
+    for arg in "$@"; do
+        if [[ $arg == --print ]]; then
+            print_seen=1
+        elif [[ ${print_seen:-0} == 1 && $arg == sysroot ]]; then
+            [[ -z ${FAKE_SKN_SYSROOT:-} ]] || printf '%s\n' "$FAKE_SKN_SYSROOT"
+            exit "$final_status"
+        fi
+    done
+fi
+
+exit "$final_status"
 EOF
     chmod +x "$fake_bin/skn"
 
@@ -109,6 +130,7 @@ EOF
     unset CARGO_HOME RUSTUP_HOME
     export FAKE_SKN_INFO_RESULT=real
     export FAKE_CARGO_LOCATE=fail
+    unset FAKE_SKN_FINAL_FAIL_AT FAKE_SKN_FINAL_FAIL_STATUS FAKE_SKN_SYSROOT
 }
 
 write_args_lines() {
@@ -1034,7 +1056,6 @@ EOF
     run "$SKN_RUST_ANALYZER" +N --stdio
     assert_status 2
     assert_output_contains 'refusing +N'
-    assert_output_contains 'skn-cargo fetch'
     [[ ! -e $FAKE_CARGO_LOCATE_CWD ]]
     [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
 }
@@ -1057,6 +1078,74 @@ EOF
         FAKE_CARGO_LOCATE=fail \
         "$SKN_RUST_ANALYZER" --stdio
     assert_success
+}
+
+@test 'skn-rust-analyzer prefetches project dependencies before launching offline' {
+    run "$SKN_RUST_ANALYZER" +R /tmp --stdio
+    assert_success
+    assert_final_invocation_count 3
+
+    read_final_invocation_args 1 project-fetch
+    assert_args_contain "$args" 'cargo'
+    assert_args_contain "$args" '+E'
+    assert_args_contain "$args" '+R/tmp'
+    assert_args_contain "$args" '+N'
+    assert_args_contain_pair "$args" '+X' 'cargo'
+    assert_args_contain "$args" 'fetch'
+
+    read_final_invocation_args 2 sysroot-discovery
+    assert_args_contain "$args" 'rustc'
+    assert_args_contain_pair "$args" '+X' 'cargo:no-lockfile'
+    assert_args_contain "$args" '--print'
+    assert_args_contain "$args" 'sysroot'
+
+    read_final_invocation_args 3 rust-analyzer-final
+    assert_args_contain "$args" 'rust-analyzer'
+    assert_args_contain_pair "$args" '+X' 'cargo:rust-analyzer'
+    assert_args_contain_pair "$args" '+V' 'CARGO_NET_OFFLINE=true'
+}
+
+@test 'skn-rust-analyzer continues when project prefetch fails' {
+    export FAKE_SKN_FINAL_FAIL_AT=1
+
+    run "$SKN_RUST_ANALYZER" --stdio
+    assert_success
+    assert_final_invocation_count 3
+
+    read_final_invocation_args 1 project-fetch
+    assert_args_contain "$args" 'cargo'
+    assert_args_contain "$args" 'fetch'
+
+    read_final_invocation_args 3 rust-analyzer-final
+    assert_args_contain "$args" 'rust-analyzer'
+    assert_args_contain_pair "$args" '+V' 'CARGO_NET_OFFLINE=true'
+}
+
+@test 'skn-rust-analyzer prefetches sysroot dependencies when rust-src is present' {
+    sysroot="$BATS_TEST_TMPDIR/sysroot"
+    library="$sysroot/lib/rustlib/src/rust/library"
+    mkdir -p "$library"
+    touch "$library/Cargo.toml"
+    export FAKE_SKN_SYSROOT="$sysroot"
+
+    run "$SKN_RUST_ANALYZER" --stdio
+    assert_success
+    assert_final_invocation_count 4
+
+    read_final_invocation_args 3 sysroot-fetch
+    assert_args_contain "$args" 'cargo'
+    assert_args_contain "$args" '+N'
+    assert_args_contain_pair "$args" '+X' 'cargo:no-lockfile'
+    assert_args_contain_pair "$args" '+R' "$sysroot"
+    assert_args_contain_pair "$args" '+V' '__CARGO_TEST_CHANNEL_OVERRIDE_DO_NOT_USE_THIS=nightly'
+    assert_args_contain_pair "$args" '+V' "RUSTUP_TOOLCHAIN=$sysroot"
+    assert_args_contain "$args" 'fetch'
+    assert_args_contain "$args" '--locked'
+    assert_args_contain_pair "$args" '--manifest-path' "$library/Cargo.toml"
+
+    read_final_invocation_args 4 rust-analyzer-final
+    assert_args_contain "$args" 'rust-analyzer'
+    assert_args_contain_pair "$args" '+V' 'CARGO_NET_OFFLINE=true'
 }
 
 @test 'skn-rust-analyzer uses the cargo rust-analyzer expansion profile' {

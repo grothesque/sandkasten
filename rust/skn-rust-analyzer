@@ -14,16 +14,19 @@
 # and tests launched by rust-analyzer inherit that sandbox, regardless of how
 # rust-analyzer chooses to locate cargo.
 #
-# The wrapper asks skn to set CARGO_NET_OFFLINE=true inside the sandbox. This
-# preserves the important separation between fetching dependencies with network
-# access and analyzing/building without it. +N is refused because rust-analyzer
-# can execute build scripts, proc macros, tests, and other project code through
-# Cargo subprocesses.
+# Before launching rust-analyzer, the wrapper runs best-effort network-enabled
+# Cargo fetch phases for the project and sysroot sources. These phases may
+# download dependencies or update Cargo.lock, but they do not build or execute
+# project code. The wrapper then asks skn to set CARGO_NET_OFFLINE=true inside
+# the rust-analyzer sandbox. This preserves the important separation between
+# fetching dependencies with network access and analyzing/building without it.
+# +N is refused because rust-analyzer can execute build scripts, proc macros,
+# tests, and other project code through Cargo subprocesses.
 #
-# Filesystem and toolchain grants are provided by the rust-analyzer profile of
-# skn-expansion-cargo. In a workspace, the workspace is readable and the
-# workspace target directory is writable; outside a workspace, only tool-home
-# grants are added.
+# Filesystem and toolchain grants for the final rust-analyzer process are
+# provided by the rust-analyzer profile of skn-expansion-cargo. In a workspace,
+# the workspace is readable and the workspace target directory is writable;
+# outside a workspace, only tool-home grants are added.
 
 set -euo pipefail
 
@@ -39,31 +42,79 @@ export SKN_RUST_ANALYZER_WRAPPER_ACTIVE=1
 
 # Parses skn’s +0 machine-readable info. This delegates option parsing to skn
 # itself instead of mirroring skn’s option grammar here.
-network_enabled_from_skn_info() {
-    local argc arg line
+parse_skn_info() {
+    local argc arg delimiter_seen=0 format header_done=0 i line
+    local -a parsed_argv=()
 
-    IFS= read -r line || return 2
-    [[ $line == 'format: skn-info-mk2' ]] || return 2
+    skn_argv=()
+    explicit_network=0
 
-    IFS= read -r line || return 2
-    [[ $line == 'argc: '* ]] || return 2
-    argc=${line#'argc: '}
-    [[ $argc =~ ^[0-9]+$ ]] || return 2
-    ((10#$argc >= 2)) || return 2
+    while IFS= read -r line; do
+        [[ -n $line ]] || { header_done=1; break; }
 
-    IFS= read -r line || return 2
-    [[ -z $line ]] || return 2
-
-    IFS= read -r -d '' || return 2
-    for ((i = 1; i < 10#$argc; ++i)); do
-        IFS= read -r -d '' arg || return 2
-        case $arg in
-            +N) return 0 ;;
-            ++) return 1 ;;
+        case $line in
+            "format: "*) format=${line#"format: "} ;;
+            "argc: "*) argc=${line#"argc: "} ;;
+            *": "*) ;;
+            *) return 1 ;;
         esac
     done
 
-    return 2
+    ((header_done)) || return 1
+    [[ ${format:-} == skn-info-mk2 ]] || return 1
+    [[ ${argc:-} =~ ^[0-9]+$ ]] || return 1
+    ((10#$argc >= 2)) || return 1
+
+    for ((i = 0; i < 10#$argc; ++i)); do
+        IFS= read -r -d '' arg || return 1
+        parsed_argv+=("$arg")
+    done
+
+    for ((i = 1; i < 10#$argc; ++i)); do
+        arg=${parsed_argv[i]}
+        if [[ $arg == ++ ]]; then
+            delimiter_seen=1
+            break
+        fi
+
+        skn_argv+=("$arg")
+        [[ $arg == +N ]] && explicit_network=1
+    done
+
+    ((delimiter_seen)) || return 1
+}
+
+warn_prefetch_failed() {
+    echo "$progname: warning: $1 failed" >&2
+}
+
+prefetch_project_dependencies() {
+    skn "$real_cargo" +E "${skn_argv[@]}" +N +X cargo ++ fetch ||
+        warn_prefetch_failed 'project dependency prefetch'
+}
+
+prefetch_sysroot_dependencies() {
+    local library_manifest sysroot
+
+    if ! sysroot=$(skn "${RUSTC:-rustc}" +E "${skn_argv[@]}" +X cargo:no-lockfile ++ --print sysroot); then
+        warn_prefetch_failed 'sysroot discovery'
+        return 0
+    fi
+
+    sysroot=${sysroot%$'\n'}
+    [[ -n $sysroot ]] || return 0
+
+    library_manifest=$sysroot/lib/rustlib/src/rust/library/Cargo.toml
+    [[ -e $library_manifest ]] || return 0
+
+    # Prefetch the sysroot source dependencies the way rust-analyzer later
+    # asks Cargo for sysroot metadata: use the discovered toolchain, and make
+    # Cargo accept the unstable manifest features used by rust-src.
+    skn "$real_cargo" +E "${skn_argv[@]}" +N +X cargo:no-lockfile +R "$sysroot" \
+        +V __CARGO_TEST_CHANNEL_OVERRIDE_DO_NOT_USE_THIS=nightly \
+        +V "RUSTUP_TOOLCHAIN=$sysroot" \
+        ++ fetch --locked --manifest-path "$library_manifest" ||
+        warn_prefetch_failed 'sysroot dependency prefetch'
 }
 
 real_rust_analyzer=${SKN_REAL_RUST_ANALYZER:-rust-analyzer}
@@ -76,16 +127,19 @@ skn_args=(
     +V "CARGO=$real_cargo"
 )
 
-if network_enabled_from_skn_info < <("${skn_args[@]}" +0 "$@"); then
-    echo "$progname: refusing +N: rust-analyzer can execute project code via Cargo subprocesses" >&2
-    echo "$progname: fetch dependencies separately, for example with skn-cargo fetch, then run rust-analyzer offline" >&2
+parse_skn_info < <(skn "$real_rust_analyzer" +0 "$@") || {
+    echo "$progname: internal error parsing skn +0 output" >&2
     exit 2
-else
-    case $? in
-        1) ;;
-        *) echo "$progname: internal error parsing skn +0 output" >&2; exit 2 ;;
-    esac
+}
+
+if ((explicit_network)); then
+    echo "$progname: refusing +N: rust-analyzer can execute project code via Cargo subprocesses" >&2
+    echo "$progname: dependency fetching is done automatically before rust-analyzer starts" >&2
+    exit 2
 fi
+
+prefetch_project_dependencies
+prefetch_sysroot_dependencies
 
 skn_args+=(
     +X cargo:rust-analyzer

@@ -28,6 +28,8 @@ The wrappers apply two complementary policies automatically:
   Cargo subcommands whose purpose is dependency resolution or retrieval may get network access.
   Common build-like subcommands (like `build` or `run`) are split into a networked prefetch phase
   followed by the requested command in an offline sandbox.
+  `skn-rust-analyzer` follows the same principle:
+  it prefetches dependencies first, then launches rust-analyzer offline.
 
 ## Quick start
 
@@ -80,7 +82,7 @@ for that case, see [Strict setup](#strict-setup).
 | `skn-cargo build`, `check`, `test`, `run`, … | Prefetch dependencies if needed, then run the requested command offline. |
 | `skn-cargo fetch`, `update`, `add`, … | Allow network access automatically for dependency resolution or retrieval. |
 | `skn-cargo +N ...` | Run one explicitly networked Cargo invocation. Build-time code may use the network. |
-| `skn-rust-analyzer` | Run rust-analyzer and its Cargo subprocesses offline. `+N` is refused. |
+| `skn-rust-analyzer` | Prefetch project and sysroot dependencies if needed, then run rust-analyzer and its Cargo subprocesses offline. `+N` is refused. |
 
 The exact command policy is intentionally kept in the wrapper source.
 Use `+S` to inspect a particular invocation.
@@ -109,10 +111,6 @@ skn-cargo +N build
 
 This keeps the filesystem sandbox,
 but build scripts, proc macros, tests, and subprocesses may use the network.
-
-If rust-analyzer reports missing dependencies,
-fetch or build them first with `skn-cargo`,
-then run rust-analyzer offline.
 
 For other tools that should use the same Cargo workspace/cache filesystem grants,
 use the same expansion helper that the wrappers use internally:
@@ -267,8 +265,12 @@ It may download more than the following command strictly needs.
 The important property is that build scripts, proc macros, tests,
 and project subprocesses run in the offline phase.
 
-`skn-rust-analyzer` refuses network access.
-It uses the `cargo:rust-analyzer` expansion profile,
+`skn-rust-analyzer` refuses explicit `+N`,
+but first runs network-enabled `cargo fetch` phases for the project workspace
+and for Rust sysroot sources when they are available.
+These fetch phases may download dependencies or update `Cargo.lock`,
+but they do not build or execute project code.
+It then launches rust-analyzer offline with the `cargo:rust-analyzer` expansion profile,
 so rust-analyzer can read the workspace and write Cargo build/cache state
 without receiving write access to source directories.
 Given current [rust-analyzer design](https://github.com/rust-lang/rust-analyzer/issues/22118),

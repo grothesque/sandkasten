@@ -6,6 +6,11 @@
   with network access before running the requested Cargo command offline.
   Cargo offline controls suppress the prefetch; explicit `+N` runs Cargo once
   with network access.
+- `skn-rust-analyzer`: Prefetch project and Rust sysroot source dependencies
+  with network access before launching rust-analyzer.
+  The fetch phases do not build or execute project code;
+  rust-analyzer itself still runs offline and without write access to project
+  source code.
 - Add `+X NAME[:PROFILE]` expansions:
   trusted `skn-expansion-NAME` helpers can emit reusable groups of `skn` options,
   one argument per line.
