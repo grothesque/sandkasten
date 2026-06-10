@@ -388,22 +388,20 @@ parse_skn_options() {
                 ;;
             +N)
                 network=1
-                skn_option_args+=(+N)
-                machine_skn_args+=(+N)
+                replay_skn_args+=(+N)
                 shift
                 continue
                 ;;
             +E)
                 preserve_env=1
-                skn_option_args+=(+E)
-                machine_skn_args+=(+E)
+                replay_skn_args+=(+E)
                 shift
                 continue
                 ;;
             +S)
                 reject_in_expansion "disallowed skn control option: $1"
                 [[ $run_action == execute ]] && run_action=show_plan
-                machine_skn_args+=(+S)
+                replay_skn_args+=(+S)
                 shift
                 continue
                 ;;
@@ -449,8 +447,7 @@ parse_skn_options() {
                     shift
                 fi
                 queue_env_spec "$env_spec"
-                skn_option_args+=(+V "$env_spec")
-                machine_skn_args+=("+V$env_spec")
+                replay_skn_args+=("+V$env_spec")
                 continue
                 ;;
             +A|+A?*)
@@ -479,8 +476,7 @@ parse_skn_options() {
 
         [[ -n $path ]] || error "empty path for $option"
         bind_queue+=("$option" "$path")
-        skn_option_args+=("$option" "$path")
-        machine_skn_args+=("$option$path")
+        replay_skn_args+=("$option$path")
     done
 }
 
@@ -524,6 +520,9 @@ add_network_bwrap_setup() {
 }
 
 print_info_header() {
+    local arg
+    local -a display_skn_args=()
+
     printf 'skn: sandboxed command: %s\n' "$(quote_shell_words "$cmd" "${command_args[@]}" "$@")"
 
     if ((network)); then
@@ -538,18 +537,28 @@ print_info_header() {
         echo "skn: environment mostly cleared"
     fi
 
-    printf 'skn: equivalent invocation: %s\n' "$(quote_shell_words "$progname" "$cmd" "${skn_option_args[@]}" ++ "${command_args[@]}" "$@")"
+    # replay_skn_args stores argument-taking options in attached form
+    # (e.g. +Rpath), so split them back into separate shell words for readability.
+    for arg in "${replay_skn_args[@]}"; do
+        case $arg in
+            +S) ;;
+            +??*) display_skn_args+=("${arg:0:2}" "${arg:2}") ;;
+            *) display_skn_args+=("$arg") ;;
+        esac
+    done
+
+    printf 'skn: equivalent invocation: %s\n' "$(quote_shell_words "$progname" "$cmd" "${display_skn_args[@]}" ++ "${command_args[@]}" "$@")"
 }
 
 print_parsed_info() {
     local argc
 
-    argc=$((1 + ${#machine_skn_args[@]} + 1 + ${#command_args[@]} + $#))
+    argc=$((1 + ${#replay_skn_args[@]} + 1 + ${#command_args[@]} + $#))
 
     printf 'format: skn-info-mk2\n'
     printf 'argc: %d\n' "$argc"
     printf '\n'
-    printf '%s\0' "$cmd" "${machine_skn_args[@]}" ++ "${command_args[@]}" "$@"
+    printf '%s\0' "$cmd" "${replay_skn_args[@]}" ++ "${command_args[@]}" "$@"
 }
 
 if (($# == 0)); then
@@ -577,11 +586,10 @@ network=0
 preserve_env=0
 run_action=execute
 command_args=()
-skn_option_args=()
+replay_skn_args=()
 env_queue=()
 env_ro_bind_queue=()
 bind_queue=()
-machine_skn_args=()
 expansion_args=()
 parse_remaining_args=()
 bwrap_args=()
