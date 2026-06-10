@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.0] - 2026-06-11
 
 - `skn-cargo`: Build-like subcommands now automatically prefetch dependencies
   with network access before running the requested Cargo command offline.
