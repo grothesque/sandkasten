@@ -231,7 +231,7 @@ add_bind() {
     local path=$2
     local abs_path realpath_args
 
-    if ((show_mode)); then
+    if [[ $run_action == show_plan ]]; then
         realpath_args=(-s -m)
     else
         if ! "$SKN_PATH_CHECK" "$path"; then
@@ -247,7 +247,7 @@ add_bind() {
         +R) add_bwrap_args --ro-bind "$abs_path" "$abs_path" ;;
         +W) add_bwrap_args --bind "$abs_path" "$abs_path" ;;
         +T)
-            ((show_mode)) || [[ -d $abs_path ]] || error "+T requires an existing directory: $path"
+            [[ $run_action == show_plan ]] || [[ -d $abs_path ]] || error "+T requires an existing directory: $path"
             add_bwrap_args --overlay-src "$abs_path" --tmp-overlay "$abs_path"
             ;;
         *)
@@ -402,14 +402,14 @@ parse_skn_options() {
                 ;;
             +S)
                 reject_in_expansion "disallowed skn control option: $1"
-                show_mode=1
+                [[ $run_action == execute ]] && run_action=show_plan
                 machine_skn_args+=(+S)
                 shift
                 continue
                 ;;
             +0)
                 reject_in_expansion "disallowed skn control option: $1"
-                machine_mode=1
+                run_action=parse_only
                 shift
                 continue
                 ;;
@@ -541,7 +541,7 @@ print_info_header() {
     printf 'skn: equivalent invocation: %s\n' "$(quote_shell_words "$progname" "$cmd" "${skn_option_args[@]}" ++ "${command_args[@]}" "$@")"
 }
 
-print_machine_info() {
+print_parsed_info() {
     local argc
 
     argc=$((1 + ${#machine_skn_args[@]} + 1 + ${#command_args[@]} + $#))
@@ -575,8 +575,7 @@ esac
 
 network=0
 preserve_env=0
-show_mode=0
-machine_mode=0
+run_action=execute
 command_args=()
 skn_option_args=()
 env_queue=()
@@ -597,12 +596,12 @@ declare -A env_values=()
 parse_skn_options main "$@"
 set -- "${parse_remaining_args[@]}"
 
-if ((machine_mode)); then
-    print_machine_info "$@"
+if [[ $run_action == parse_only ]]; then
+    print_parsed_info "$@"
     exit 0
 fi
 
-((show_mode)) || [[ -n ${SKN_PATH_CHECK:-} ]] || error "SKN_PATH_CHECK is not set"
+[[ $run_action == show_plan ]] || [[ -n ${SKN_PATH_CHECK:-} ]] || error "SKN_PATH_CHECK is not set"
 
 add_base_bwrap_setup
 
@@ -633,7 +632,7 @@ else
     add_queued_envs
 fi
 
-if ((show_mode)); then
+if [[ $run_action == show_plan ]]; then
     print_info_header "$@"
     echo "skn: resulting bwrap invocation:"
     print_bwrap_command "$cmd" "${command_args[@]}" "$@"
