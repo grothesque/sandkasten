@@ -228,6 +228,50 @@ EOF
     [[ $(<"$BATS_TEST_TMPDIR/profile.args") == $'1\nprofile' ]]
 }
 
+@test '+X helpers see inspect mode for +S and +0 even when they appear later' {
+    fake_bin="$BATS_TEST_TMPDIR/bin"
+    mkdir -p "$fake_bin"
+
+    cat >"$fake_bin/skn-expansion-demo" <<'EOF'
+#!/bin/bash
+printf '%s\n' "${SKN_EXPANSION_MODE:-unset}" >"${EXPANSION_MODE_FILE:?}"
+printf '%s\n' +N
+EOF
+    chmod +x "$fake_bin/skn-expansion-demo"
+
+    run env -u SKN_PATH_CHECK PATH="$fake_bin:$PATH" \
+        EXPANSION_MODE_FILE="$BATS_TEST_TMPDIR/show.mode" \
+        "$SKN" true +X demo +S
+
+    assert_success
+    [[ $(<"$BATS_TEST_TMPDIR/show.mode") == inspect ]]
+
+    run bash -c 'env -u SKN_PATH_CHECK PATH="$2:$PATH" EXPANSION_MODE_FILE="$3" "$1" true +X demo +0 | tr "\0" "\n"' \
+        _ "$SKN" "$fake_bin" "$BATS_TEST_TMPDIR/parse.mode"
+
+    assert_success
+    [[ $(<"$BATS_TEST_TMPDIR/parse.mode") == inspect ]]
+}
+
+@test '+X helpers see prepare mode for normal execution' {
+    fake_bin="$BATS_TEST_TMPDIR/bin"
+    mkdir -p "$fake_bin"
+
+    cat >"$fake_bin/skn-expansion-demo" <<EOF
+#!/bin/bash
+printf '%s\n' "\${SKN_EXPANSION_MODE:-unset}" >"\${EXPANSION_MODE_FILE:?}"
+printf '%s\n' +R '$BATS_TEST_TMPDIR/rejected'
+EOF
+    chmod +x "$fake_bin/skn-expansion-demo"
+
+    run env SKN_PATH_CHECK=false PATH="$fake_bin:$PATH" \
+        EXPANSION_MODE_FILE="$BATS_TEST_TMPDIR/execute.mode" \
+        "$SKN" true +X demo
+
+    assert_status 2
+    [[ $(<"$BATS_TEST_TMPDIR/execute.mode") == prepare ]]
+}
+
 @test '+X expanded options appear in +0 machine info' {
     fake_bin="$BATS_TEST_TMPDIR/bin"
     mkdir -p "$fake_bin"

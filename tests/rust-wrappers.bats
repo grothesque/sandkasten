@@ -397,6 +397,35 @@ assert_final_invocation_count() {
     ((fetch_line < build_line))
 }
 
+@test 'skn-cargo uses inspect expansion mode for +S' {
+    cat >"$fake_bin/skn-expansion-cargo" <<'EOF'
+#!/bin/bash
+printf '%s\n' "${SKN_EXPANSION_MODE:-unset}" >"${EXPANSION_MODE_FILE:?}"
+EOF
+    chmod +x "$fake_bin/skn-expansion-cargo"
+
+    run env PATH="$REPO_ROOT:$PATH" \
+        SKN_REAL_CARGO="$REAL_FAKE_CARGO" \
+        EXPANSION_MODE_FILE="$BATS_TEST_TMPDIR/skn-cargo-show.mode" \
+        "$SKN_CARGO" +S build
+
+    assert_success
+    [[ $(<"$BATS_TEST_TMPDIR/skn-cargo-show.mode") == inspect ]]
+}
+
+@test 'skn-cargo uses prepare expansion mode for execution' {
+    cat >"$fake_bin/skn-expansion-cargo" <<'EOF'
+#!/bin/bash
+printf '%s\n' "${SKN_EXPANSION_MODE:-unset}" >"${EXPANSION_MODE_FILE:?}"
+EOF
+    chmod +x "$fake_bin/skn-expansion-cargo"
+
+    run env EXPANSION_MODE_FILE="$BATS_TEST_TMPDIR/skn-cargo-execute.mode" "$SKN_CARGO" build
+
+    assert_success
+    [[ $(<"$BATS_TEST_TMPDIR/skn-cargo-execute.mode") == prepare ]]
+}
+
 @test 'skn-cargo constructs conservative cargo fetch arguments from cargo build' {
     workspace="$BATS_TEST_TMPDIR/fetch-args-workspace"
     mkdir -p "$workspace"

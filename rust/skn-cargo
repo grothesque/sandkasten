@@ -388,6 +388,16 @@ apply_network_policy() {
     return 0
 }
 
+cargo_context_expansion_mode() {
+    local skn_arg
+
+    for skn_arg in "${skn_argv[@]}"; do
+        [[ $skn_arg == +S ]] && { printf '%s\n' inspect; return 0; }
+    done
+
+    printf '%s\n' prepare
+}
+
 collect_cargo_context_args() {
     local cargo_effective_cwd output
     local -a expansion_profile_args=()
@@ -399,7 +409,8 @@ collect_cargo_context_args() {
         expansion_profile_args=(no-lockfile)
     fi
 
-    if output=$(cd -- "$cargo_effective_cwd" && skn-expansion-cargo "${expansion_profile_args[@]}"); then
+    if output=$(cd -- "$cargo_effective_cwd" && \
+        SKN_EXPANSION_MODE=$(cargo_context_expansion_mode) skn-expansion-cargo "${expansion_profile_args[@]}"); then
         cargo_context_args=()
         [[ -z $output ]] || mapfile -t cargo_context_args <<<"$output"
     else

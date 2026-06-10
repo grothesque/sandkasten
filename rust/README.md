@@ -227,6 +227,10 @@ You can inspect those grants directly with
 skn-expansion-cargo
 skn-expansion-cargo rust-analyzer
 ```
+Direct inspection is side-effect-free.
+During normal `skn +X cargo` or wrapper execution,
+the helper may prepare missing paths needed for emitted writable grants,
+such as `target`, `Cargo.lock`, or Cargo cache directories.
 
 In a Cargo workspace, the default `cargo` profile grants
 writable access to the workspace root when run there;

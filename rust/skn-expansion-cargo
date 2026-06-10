@@ -26,6 +26,9 @@ The default cargo profile grants writable package/workspace access suitable for
 Cargo commands. The no-lockfile profile avoids creating or binding Cargo.lock.
 The rust-analyzer profile grants read-only workspace access plus a writable
 target directory.
+
+By default, and with SKN_EXPANSION_MODE=inspect, this helper only prints grants.
+With SKN_EXPANSION_MODE=prepare, it may create missing paths needed by those grants.
 EOF
 }
 
@@ -40,6 +43,20 @@ emit_arg() {
         [[ $arg != *$'\n'* ]] || error "cannot emit argument containing newline"
         printf '%s\n' "$arg"
     done
+}
+
+prepare_dir() {
+    local path=$1
+
+    ((may_prepare)) || return 0
+    mkdir -p -- "$path" || error "could not create directory: $path"
+}
+
+prepare_file() {
+    local path=$1
+
+    ((may_prepare)) || return 0
+    [[ -e $path || -L $path ]] || touch -- "$path" || error "could not create file: $path"
 }
 
 locate_workspace_manifest() {
@@ -84,8 +101,7 @@ locate_workspace_manifest() {
 emit_workspace_lockfile_grant() {
     local lockfile=$workspace_root/Cargo.lock
 
-    [[ -e $lockfile || -L $lockfile ]] || touch -- "$lockfile" ||
-        error "could not create workspace lockfile: $lockfile"
+    prepare_file "$lockfile"
     emit_arg +W "$lockfile"
 }
 
@@ -97,6 +113,7 @@ emit_workspace_grants() {
             else
                 emit_arg +R "$workspace_root"
                 emit_workspace_lockfile_grant
+                prepare_dir "$target_dir"
                 emit_arg +W "$target_dir"
                 emit_arg +W "$cwd"
             fi
@@ -106,12 +123,14 @@ emit_workspace_grants() {
                 emit_arg +W "$workspace_root"
             else
                 emit_arg +R "$workspace_root"
+                prepare_dir "$target_dir"
                 emit_arg +W "$target_dir"
                 emit_arg +W "$cwd"
             fi
             ;;
         rust-analyzer)
             emit_arg +R "$workspace_root"
+            prepare_dir "$target_dir"
             emit_arg +W "$target_dir"
             ;;
         *)
@@ -136,8 +155,8 @@ emit_tool_home_grants() {
         if ((cargo_home_set)); then
             emit_arg +V "CARGO_HOME=$cargo_home"
         fi
-        mkdir -p -- "$cargo_home/registry" "$cargo_home/git" ||
-            error "could not create Cargo cache directories under: $cargo_home"
+        prepare_dir "$cargo_home/registry"
+        prepare_dir "$cargo_home/git"
         emit_arg +R "$cargo_home"
         emit_arg +W "$cargo_home/registry"
         emit_arg +W "$cargo_home/git"
@@ -184,6 +203,12 @@ case $profile in
     *) error "unknown profile: $profile" ;;
 esac
 
+case ${SKN_EXPANSION_MODE:-inspect} in
+    inspect) may_prepare=0 ;;
+    prepare) may_prepare=1 ;;
+    *) error "invalid SKN_EXPANSION_MODE: $SKN_EXPANSION_MODE" ;;
+esac
+
 real_cargo=${SKN_REAL_CARGO:-cargo}
 cwd=$(normalize_path "$PWD") || error "could not normalize current directory: $PWD"
 
@@ -191,7 +216,6 @@ if locate_workspace_manifest; then
     workspace_root=$(dirname -- "$workspace_manifest") || exit 2
     workspace_root=$(normalize_path "$workspace_root") || error "could not normalize workspace root: $workspace_root"
     target_dir=$workspace_root/target
-    mkdir -p -- "$target_dir" || error "could not create workspace target directory: $target_dir"
 
     emit_workspace_grants
 fi

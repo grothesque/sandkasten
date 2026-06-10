@@ -33,7 +33,7 @@ EOF
     chmod +x "$fake_bin/cargo"
 }
 
-@test 'skn-expansion-cargo emits narrow workspace grants and creates target' {
+@test 'skn-expansion-cargo emits narrow workspace grants without preparing by default' {
     workspace="$BATS_TEST_TMPDIR/workspace"
     member="$workspace/crate-a"
     home="$BATS_TEST_TMPDIR/home"
@@ -47,7 +47,7 @@ EOF
         +W "$workspace/target" \
         +W "$member")
 
-    run env -u SKN_REAL_CARGO -u CARGO_HOME -u RUSTUP_HOME \
+    run env -u SKN_EXPANSION_MODE -u SKN_REAL_CARGO -u CARGO_HOME -u RUSTUP_HOME \
         HOME="$home" \
         PATH="$fake_bin:$PATH" \
         FAKE_WORKSPACE_MANIFEST="$workspace/Cargo.toml" \
@@ -55,7 +55,50 @@ EOF
 
     assert_success
     [[ $output == "$expected" ]]
+    assert_file_not_exists "$workspace/Cargo.lock"
+    assert_file_not_exists "$workspace/target"
+}
+
+@test 'skn-expansion-cargo prepare mode creates workspace prerequisites' {
+    workspace="$BATS_TEST_TMPDIR/prepare-workspace"
+    member="$workspace/crate-a"
+    home="$BATS_TEST_TMPDIR/prepare-home"
+    mkdir -p "$member" "$home"
+    rm -rf -- "$home/.cargo" "$home/.rustup"
+    touch "$workspace/Cargo.toml"
+
+    run env -u SKN_REAL_CARGO -u CARGO_HOME -u RUSTUP_HOME \
+        SKN_EXPANSION_MODE=prepare \
+        HOME="$home" \
+        PATH="$fake_bin:$PATH" \
+        FAKE_WORKSPACE_MANIFEST="$workspace/Cargo.toml" \
+        bash -c 'cd -- "$1" && "$2"' _ "$member" "$SKN_EXPANSION_CARGO"
+
+    assert_success
     assert_file_exists "$workspace/Cargo.lock"
+    assert_file_exists "$workspace/target"
+}
+
+@test 'skn-expansion-cargo prepare mode does not touch through a dangling lockfile symlink' {
+    workspace="$BATS_TEST_TMPDIR/symlink-workspace"
+    member="$workspace/crate-a"
+    home="$BATS_TEST_TMPDIR/symlink-home"
+    outside="$BATS_TEST_TMPDIR/outside"
+    mkdir -p "$member" "$home" "$outside"
+    rm -rf -- "$home/.cargo" "$home/.rustup"
+    touch "$workspace/Cargo.toml"
+    ln -s "$outside/Cargo.lock" "$workspace/Cargo.lock"
+
+    run env -u SKN_REAL_CARGO -u CARGO_HOME -u RUSTUP_HOME \
+        SKN_EXPANSION_MODE=prepare \
+        HOME="$home" \
+        PATH="$fake_bin:$PATH" \
+        FAKE_WORKSPACE_MANIFEST="$workspace/Cargo.toml" \
+        bash -c 'cd -- "$1" && "$2"' _ "$member" "$SKN_EXPANSION_CARGO"
+
+    assert_success
+    [[ -L $workspace/Cargo.lock ]]
+    assert_file_not_exists "$outside/Cargo.lock"
     assert_file_exists "$workspace/target"
 }
 
@@ -81,6 +124,7 @@ EOF
     assert_success
     [[ $output == "$expected" ]]
     assert_file_not_exists "$workspace/Cargo.lock"
+    assert_file_not_exists "$workspace/target"
 }
 
 
@@ -101,7 +145,7 @@ EOF
 
     assert_success
     [[ $output == "$expected" ]]
-    assert_file_exists "$workspace/target"
+    assert_file_not_exists "$workspace/target"
 }
 
 @test 'skn-expansion-cargo rust-analyzer profile grants read-only workspace plus target' {
@@ -124,7 +168,7 @@ EOF
 
     assert_success
     [[ $output == "$expected" ]]
-    assert_file_exists "$workspace/target"
+    assert_file_not_exists "$workspace/target"
 
     run env -u SKN_REAL_CARGO -u CARGO_HOME -u RUSTUP_HOME \
         HOME="$home" \
@@ -160,8 +204,48 @@ EOF
     assert_output_contains $'+W\n'"$cargo_home/git"
     assert_output_contains $'+V\n'"RUSTUP_HOME=$rustup_home"
     assert_output_contains $'+R\n'"$rustup_home"
+    assert_file_not_exists "$cargo_home/registry"
+    assert_file_not_exists "$cargo_home/git"
+}
+
+@test 'skn-expansion-cargo prepare mode creates tool cache directories' {
+    workspace="$BATS_TEST_TMPDIR/tool-prepare-workspace"
+    member="$workspace/crate-a"
+    home="$BATS_TEST_TMPDIR/tool-prepare-home"
+    cargo_home="$BATS_TEST_TMPDIR/tool-prepare-cargo-home"
+    rustup_home="$BATS_TEST_TMPDIR/tool-prepare-rustup-home"
+    mkdir -p "$member" "$home" "$cargo_home" "$rustup_home"
+    touch "$workspace/Cargo.toml"
+
+    run env -u SKN_REAL_CARGO \
+        SKN_EXPANSION_MODE=prepare \
+        HOME="$home" \
+        CARGO_HOME="$cargo_home" \
+        RUSTUP_HOME="$rustup_home" \
+        PATH="$fake_bin:$PATH" \
+        FAKE_WORKSPACE_MANIFEST="$workspace/Cargo.toml" \
+        bash -c 'cd -- "$1" && "$2"' _ "$member" "$SKN_EXPANSION_CARGO"
+
+    assert_success
     assert_file_exists "$cargo_home/registry"
     assert_file_exists "$cargo_home/git"
+}
+
+@test 'skn-expansion-cargo rejects invalid expansion mode' {
+    project="$BATS_TEST_TMPDIR/invalid-mode-workspace"
+    home="$BATS_TEST_TMPDIR/invalid-mode-home"
+    mkdir -p "$project" "$home"
+    touch "$project/Cargo.toml"
+
+    run env -u SKN_REAL_CARGO -u CARGO_HOME -u RUSTUP_HOME \
+        SKN_EXPANSION_MODE=maybe \
+        HOME="$home" \
+        PATH="$fake_bin:$PATH" \
+        FAKE_WORKSPACE_MANIFEST="$project/Cargo.toml" \
+        bash -c 'cd -- "$1" && "$2"' _ "$project" "$SKN_EXPANSION_CARGO"
+
+    assert_status 2
+    assert_output_contains 'invalid SKN_EXPANSION_MODE'
 }
 
 @test 'skn-expansion-cargo emits no project grants outside workspaces' {
@@ -199,7 +283,7 @@ EOF
     assert_output_contains "--ro-bind $workspace $workspace"
     assert_output_contains "--bind $workspace/target $workspace/target"
     assert_output_contains "--bind $member $member"
-    assert_file_exists "$workspace/target"
+    assert_file_not_exists "$workspace/target"
 }
 
 @test 'skn +X cargo:rust-analyzer uses the rust-analyzer profile' {
@@ -220,5 +304,5 @@ EOF
     assert_output_contains "--ro-bind $workspace $workspace"
     assert_output_contains "--bind $workspace/target $workspace/target"
     assert_output_not_contains "--bind $member $member"
-    assert_file_exists "$workspace/target"
+    assert_file_not_exists "$workspace/target"
 }

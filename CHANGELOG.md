@@ -18,6 +18,8 @@
   narrow Cargo workspace, cache, and toolchain grants,
   including a `+X cargo:rust-analyzer` profile for rust-analyzer-style
   workspace analysis.
+  Inspection is side-effect-free; normal execution may prepare missing bind
+  targets such as `target`, `Cargo.lock`, or Cargo cache directories.
 - `skn-cargo` and `skn-rust-analyzer` now use `skn-expansion-cargo` for
   narrower Cargo-context filesystem and toolchain grants.
 - Improve compatibility of `with-tty` with arbitrary user `.tmux.conf`:

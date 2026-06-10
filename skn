@@ -351,10 +351,12 @@ parse_expansion_spec() {
 
 run_expansion() {
     local spec=$1
-    local status stdout_file
+    local helper_mode=inspect status stdout_file
+
+    ((expansions_may_prepare)) && helper_mode=prepare
 
     stdout_file=$(mktemp) || exit 2
-    if "$expansion_cmd" "${expansion_profile_args[@]}" >"$stdout_file"; then
+    if SKN_EXPANSION_MODE=$helper_mode "$expansion_cmd" "${expansion_profile_args[@]}" >"$stdout_file"; then
         expansion_args=()
         mapfile -t expansion_args <"$stdout_file"
         rm -f -- "$stdout_file"
@@ -440,8 +442,10 @@ parse_skn_options() {
                     shift
                 fi
                 parse_expansion_spec "$expansion_spec"
-                run_expansion "$expansion_spec"
-                parse_skn_options expansion "$expansion_spec" "${expansion_args[@]}"
+                if ((apply_expansions)); then
+                    run_expansion "$expansion_spec"
+                    parse_skn_options expansion "$expansion_spec" "${expansion_args[@]}"
+                fi
                 continue
                 ;;
             +R|+W|+T|+R?*|+W?*|+T?*)
@@ -593,6 +597,7 @@ esac
 
 cmd=$1
 shift
+original_args=("$@")
 
 [[ -n $cmd ]] || error "empty COMMAND"
 
@@ -609,8 +614,19 @@ declare -A env_values=()
 
 [[ -v SKN_RO_BINDS ]] && queue_colon_list "$SKN_RO_BINDS" queue_env_ro_bind
 
+# Parse once without running +X helpers to determine whether this is real
+# execution or inspection. The second pass uses the same parser and expands +X
+# with the corresponding SKN_EXPANSION_MODE.
 reset_parse_state
-parse_skn_options main "$@"
+apply_expansions=0
+parse_skn_options main "${original_args[@]}"
+
+expansions_may_prepare=0
+[[ $run_action == execute ]] && expansions_may_prepare=1
+
+reset_parse_state
+apply_expansions=1
+parse_skn_options main "${original_args[@]}"
 set -- "${parse_remaining_args[@]}"
 
 if [[ $run_action == parse_only ]]; then
