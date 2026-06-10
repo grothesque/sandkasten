@@ -310,6 +310,24 @@ queue_pass_var_name() {
     env_queue+=(pass "$name" '')
 }
 
+# Resets only state produced by option parsing. Configuration-derived queues
+# and bwrap construction state are initialized separately.
+reset_parse_state() {
+    network=0
+    preserve_env=0
+    run_action=execute
+    command_args=()
+    replay_skn_args=()
+    env_queue=()
+    bind_queue=()
+    expansion_args=()
+    parse_remaining_args=()
+
+    if [[ -v SKN_PASS_VARS ]]; then
+        queue_colon_list "$SKN_PASS_VARS" queue_pass_var_name
+    fi
+}
+
 valid_expansion_name() {
     [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]
 }
@@ -349,11 +367,11 @@ run_expansion() {
     fi
 }
 
-# Uses parse_skn_options' dynamically scoped parse_mode/expansion_context.
+# Uses parse_skn_options' dynamically scoped parse_source/expansion_context.
 reject_in_expansion() {
     local message=$1
 
-    [[ ${parse_mode:-} == expansion ]] || return 0
+    [[ ${parse_source:-} == expansion ]] || return 0
     error "expansion ${expansion_context:-} emitted $message"
 }
 
@@ -367,11 +385,11 @@ require_option_arg() {
 }
 
 parse_skn_options() {
-    local parse_mode=$1
+    local parse_source=$1
     local expansion_context='' option path env_spec expansion_spec command_arg
 
     shift
-    if [[ $parse_mode == expansion ]]; then
+    if [[ $parse_source == expansion ]]; then
         expansion_context=$1
         shift
     fi
@@ -582,16 +600,7 @@ case $cmd in
     +[A-Z]*) error "COMMAND comes before skn options; got '$cmd' as COMMAND" ;;
 esac
 
-network=0
-preserve_env=0
-run_action=execute
-command_args=()
-replay_skn_args=()
-env_queue=()
 env_ro_bind_queue=()
-bind_queue=()
-expansion_args=()
-parse_remaining_args=()
 bwrap_args=()
 bwrap_display_lines=()
 env_loaded=0
@@ -599,8 +608,8 @@ declare -A env_present=()
 declare -A env_values=()
 
 [[ -v SKN_RO_BINDS ]] && queue_colon_list "$SKN_RO_BINDS" queue_env_ro_bind
-[[ -v SKN_PASS_VARS ]] && queue_colon_list "$SKN_PASS_VARS" queue_pass_var_name
 
+reset_parse_state
 parse_skn_options main "$@"
 set -- "${parse_remaining_args[@]}"
 
