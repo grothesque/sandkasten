@@ -91,6 +91,23 @@ load 'helpers/common'
     assert_output_not_contains 'skn: resulting bwrap invocation:'
 }
 
+@test '+0 may only be given once as an skn option' {
+    run env -u SKN_PATH_CHECK "$SKN" true +0 +0
+
+    assert_status 2
+    assert_output_contains '+0 is an skn-only option and may only be given once'
+}
+
+@test '+0 can still be passed as a command argument after ++' {
+    run bash -c 'env -u SKN_PATH_CHECK "$1" true +0 ++ +0 | tr "\0" "\n"' _ "$SKN"
+
+    assert_success
+    assert_output_contains 'skn-info-mk2'
+    assert_output_contains 'argc: 3'
+    assert_output_contains '++'
+    assert_output_contains '+0'
+}
+
 @test '+0 emits a directly replayable equivalent invocation' {
     run bash -s "$SKN" <<'EOF'
 set -euo pipefail

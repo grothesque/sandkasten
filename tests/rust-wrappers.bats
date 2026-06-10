@@ -1081,6 +1081,20 @@ EOF
     assert_output_contains 'parsing skn +0 output'
 }
 
+@test 'Rust wrappers reject user +0 before prefetch or final execution' {
+    run "$SKN_CARGO" +0 build
+    assert_status 2
+    assert_output_contains '+0 is an skn-only option and may only be given once'
+    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+    assert_final_invocation_count 0
+
+    run "$SKN_RUST_ANALYZER" +0 --stdio
+    assert_status 2
+    assert_output_contains '+0 is an skn-only option and may only be given once'
+    [[ ! -e $FAKE_SKN_FINAL_ARGS ]]
+    assert_final_invocation_count 0
+}
+
 @test 'skn-rust-analyzer refuses network access' {
     run "$SKN_RUST_ANALYZER" +N --stdio
     assert_status 2

@@ -316,6 +316,7 @@ reset_parse_state() {
     network=0
     preserve_env=0
     run_action=execute
+    parse_only_seen=0
     command_args=()
     replay_skn_args=()
     env_queue=()
@@ -427,6 +428,8 @@ parse_skn_options() {
                 ;;
             +0)
                 reject_in_expansion "disallowed skn control option: $1"
+                ((parse_only_seen)) && error "+0 is an skn-only option and may only be given once"
+                parse_only_seen=1
                 run_action=parse_only
                 shift
                 continue
