@@ -67,6 +67,7 @@ load 'helpers/common'
 
     assert_success
     assert_output_contains 'skn-info-mk2'
+    assert_output_contains 'expansions:'
     assert_output_contains 'argc: 5'
     assert_output_contains '+R./missing-ro'
     assert_output_contains '+W./missing-w'
@@ -303,6 +304,7 @@ EOF
 
     assert_success
     assert_output_contains 'skn-info-mk2'
+    assert_output_contains 'expansions: demo'
     assert_output_contains '+W'
     assert_output_contains "$BATS_TEST_TMPDIR/work"
     assert_output_contains '+E'

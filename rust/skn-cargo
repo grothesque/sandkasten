@@ -48,11 +48,12 @@ export SKN_CARGO_WRAPPER_DEPTH=$((10#$cargo_wrapper_depth + 1))
 # Parses skn’s +0 machine-readable info. This delegates option parsing to skn
 # itself instead of mirroring skn’s option grammar here.
 parse_skn_info() {
-    local argc arg delimiter_seen=0 format header_done=0 i line
+    local argc arg delimiter_seen=0 expansions_seen=0 format header_done=0 i line
     local -a parsed_argv=()
 
     skn_argv=()
     cargo_argv=()
+    expansion_specs=()
     explicit_network=0
 
     while IFS= read -r line; do
@@ -60,13 +61,19 @@ parse_skn_info() {
 
         case $line in
             "format: "*) format=${line#"format: "} ;;
+            "expansions:"*)
+                expansions_seen=1
+                expansion_specs=()
+                read -r -a expansion_specs <<<"${line#"expansions:"}"
+                ;;
             "argc: "*) argc=${line#"argc: "} ;;
-            *": "*) ;;
+            *:*) ;;
             *) return 1 ;;
         esac
     done
 
     ((header_done)) || return 1
+    ((expansions_seen)) || return 1
     [[ ${format:-} == skn-info-mk2 ]] || return 1
     [[ ${argc:-} =~ ^[0-9]+$ ]] || return 1
     ((10#$argc >= 2)) || return 1
@@ -352,19 +359,21 @@ reject_ambiguous_skn_env_options() {
 }
 
 init_skn_args() {
-    skn_args=(
+    base_skn_args=(
         skn
         "$real_cargo"
         +E
     )
 
     if [[ -n ${SKN_REAL_CARGO:-} ]]; then
-        skn_args+=(+V "CARGO=$real_cargo")
+        base_skn_args+=(+V "CARGO=$real_cargo")
     fi
+
+    policy_skn_args=()
 }
 
 parse_wrapper_args() {
-    parse_skn_info < <("${skn_args[@]}" +0 "$@") ||
+    parse_skn_info < <(skn "$real_cargo" +0 "$@") ||
         error "internal error parsing skn +0 output"
 
     reject_ambiguous_skn_env_options
@@ -374,15 +383,15 @@ apply_network_policy() {
     if analyze_cargo_args "${cargo_argv[@]}"; then
         if word_in "$cargo_subcommand" "$net_auto_subcommands"; then
             if ((! explicit_network)) && ! cargo_has_offline_intent; then
-                skn_args+=(+N)
+                policy_skn_args+=(+N)
             fi
         elif ((! explicit_network)); then
-            skn_args+=(+V CARGO_NET_OFFLINE=true)
+            policy_skn_args+=(+V CARGO_NET_OFFLINE=true)
         fi
     elif ((explicit_network)); then
         error "refusing +N: cannot safely identify Cargo subcommand"
     else
-        skn_args+=(+V CARGO_NET_OFFLINE=true)
+        policy_skn_args+=(+V CARGO_NET_OFFLINE=true)
     fi
 
     return 0
@@ -422,8 +431,35 @@ collect_cargo_context_args() {
     fi
 }
 
+run_prepare_expansions() {
+    local name profile skn_arg spec status
+
+    # +S is inspection-only; do not run prepare hooks that may create files.
+    for skn_arg in "${skn_argv[@]}"; do
+        [[ $skn_arg == +S ]] && return 0
+    done
+
+    # +0 already gave us the inspect-expanded argv.
+    # Run prepare hooks for side effects only; ignore their output.
+    for spec in "${expansion_specs[@]}"; do
+        name=${spec%%:*}
+        if [[ $spec == *:* ]]; then
+            profile=${spec#*:}
+            SKN_EXPANSION_MODE=prepare "skn-expansion-$name" "$profile" >/dev/null || {
+                status=$?
+                error "expansion $spec prepare failed: skn-expansion-$name exited with status $status"
+            }
+        else
+            SKN_EXPANSION_MODE=prepare "skn-expansion-$name" >/dev/null || {
+                status=$?
+                error "expansion $spec prepare failed: skn-expansion-$name exited with status $status"
+            }
+        fi
+    done
+}
+
 run_cargo_once() {
-    exec "${skn_args[@]}" "$@"
+    exec "${final_skn_args[@]}" ++ "${cargo_argv[@]}"
 }
 
 construct_prefetch_argv() {
@@ -475,15 +511,14 @@ run_cargo_with_prefetch() {
         error "internal error constructing cargo fetch invocation"
 
     fetch_skn_args=(
-        skn
-        "$real_cargo"
+        "${base_skn_args[@]}"
+        "${cargo_context_args[@]}"
         "${skn_argv[@]}"
         +N
-        "${cargo_context_args[@]}"
     )
 
     "${fetch_skn_args[@]}" ++ "${cargo_fetch_argv[@]}"
-    run_cargo_once "$@"
+    run_cargo_once
 }
 
 real_cargo=${SKN_REAL_CARGO:-cargo}
@@ -492,9 +527,15 @@ init_skn_args
 parse_wrapper_args "$@"
 apply_network_policy
 collect_cargo_context_args
-skn_args+=("${cargo_context_args[@]}")
+run_prepare_expansions
+final_skn_args=(
+    "${base_skn_args[@]}"
+    "${cargo_context_args[@]}"
+    "${skn_argv[@]}"
+    "${policy_skn_args[@]}"
+)
 if auto_prefetch_cargo_command; then
-    run_cargo_with_prefetch "$@"
+    run_cargo_with_prefetch
 else
-    run_cargo_once "$@"
+    run_cargo_once
 fi

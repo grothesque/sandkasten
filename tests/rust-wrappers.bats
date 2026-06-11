@@ -311,7 +311,7 @@ assert_final_invocation_count() {
     export FAKE_CARGO_LOCATE=success
     export FAKE_WORKSPACE_MANIFEST="$workspace/Cargo.toml"
 
-    run_skn_cargo_in "$member" +V RUSTFLAGS=-Dwarnings build
+    run_skn_cargo_in "$member" +V RUSTFLAGS=-Dwarnings +T "$workspace" build
     assert_success
     assert_final_invocation_count 2
 
@@ -324,6 +324,11 @@ assert_final_invocation_count() {
     assert_args_not_contain "$args" 'build'
     assert_args_not_contain "$args" 'CARGO_NET_OFFLINE=true'
     assert_args_contain "$args" '+VRUSTFLAGS=-Dwarnings'
+    assert_args_contain "$args" "+T$workspace"
+    target_line=$(line_number_matching "$workspace/target" <"$args")
+    transient_line=$(line_number_matching "+T$workspace" <"$args")
+    [[ -n $target_line && -n $transient_line ]]
+    ((target_line < transient_line))
 
     read_final_invocation_args 2 build
     assert_args_not_contain "$args" '+N'
@@ -331,7 +336,12 @@ assert_final_invocation_count() {
     assert_args_contain_pair "$args" '+W' "$workspace/target"
     assert_args_contain_pair "$args" '+W' "$member"
     assert_args_contain_pair "$args" '+V' 'CARGO_NET_OFFLINE=true'
-    assert_args_contain_pair "$args" '+V' 'RUSTFLAGS=-Dwarnings'
+    assert_args_contain "$args" '+VRUSTFLAGS=-Dwarnings'
+    assert_args_contain "$args" "+T$workspace"
+    target_line=$(line_number_matching "$workspace/target" <"$args")
+    transient_line=$(line_number_matching "+T$workspace" <"$args")
+    [[ -n $target_line && -n $transient_line ]]
+    ((target_line < transient_line))
     assert_args_contain "$args" 'build'
 }
 
@@ -424,6 +434,56 @@ EOF
 
     assert_success
     [[ $(<"$BATS_TEST_TMPDIR/skn-cargo-execute.mode") == prepare ]]
+}
+
+@test 'wrappers prepare user expansions but not for show mode' {
+    grant="$BATS_TEST_TMPDIR/user-expansion-grant"
+    mode_file="$BATS_TEST_TMPDIR/user-expansion.modes"
+    mkdir -p "$grant"
+    export USER_EXPANSION_GRANT="$grant" USER_EXPANSION_MODE_FILE="$mode_file"
+
+    cat >"$fake_bin/skn-expansion-user" <<'EOF'
+#!/bin/bash
+printf '%s\n' "${SKN_EXPANSION_MODE:-inspect}" >>"${USER_EXPANSION_MODE_FILE:?}"
+printf '%s\n' +R "${USER_EXPANSION_GRANT:?}"
+EOF
+    chmod +x "$fake_bin/skn-expansion-user"
+
+    run "$SKN_CARGO" +X user build
+    assert_success
+    assert_final_invocation_count 2
+    [[ $(<"$mode_file") == $'inspect\nprepare' ]]
+
+    read_final_invocation_args 1 fetch-user-expansion
+    assert_args_contain "$args" "+R$grant"
+    assert_args_not_contain "$args" '+Xuser'
+
+    rm -f "$mode_file" "$FAKE_SKN_FINAL_ARGS_PREFIX.count"
+    run "$SKN_CARGO" +S +X user build
+    assert_success
+    [[ $(<"$mode_file") == inspect ]]
+}
+
+@test 'wrapper policy checks see options emitted by expansions' {
+    cat >"$fake_bin/skn-expansion-net" <<'EOF'
+#!/bin/bash
+printf '%s\n' +N
+EOF
+    chmod +x "$fake_bin/skn-expansion-net"
+
+    run "$SKN_RUST_ANALYZER" +X net --stdio
+    assert_status 2
+    assert_output_contains 'refusing +N'
+
+    cat >"$fake_bin/skn-expansion-offline" <<'EOF'
+#!/bin/bash
+printf '%s\n' +V CARGO_NET_OFFLINE=false
+EOF
+    chmod +x "$fake_bin/skn-expansion-offline"
+
+    run "$SKN_CARGO" +X offline build
+    assert_status 2
+    assert_output_contains 'do not pass CARGO_NET_OFFLINE through skn +V'
 }
 
 @test 'skn-cargo constructs conservative cargo fetch arguments from cargo build' {
@@ -727,7 +787,7 @@ EOF
 
     args="$BATS_TEST_TMPDIR/final-v-rustflags.lines"
     write_args_lines "$FAKE_SKN_FINAL_ARGS" "$args"
-    assert_args_contain_pair "$args" '+V' 'RUSTFLAGS=-Dwarnings'
+    assert_args_contain "$args" '+VRUSTFLAGS=-Dwarnings'
     assert_args_contain_pair "$args" '+V' 'CARGO_NET_OFFLINE=true'
 }
 

@@ -43,10 +43,12 @@ export SKN_RUST_ANALYZER_WRAPPER_ACTIVE=1
 # Parses skn’s +0 machine-readable info. This delegates option parsing to skn
 # itself instead of mirroring skn’s option grammar here.
 parse_skn_info() {
-    local argc arg delimiter_seen=0 format header_done=0 i line
+    local argc arg delimiter_seen=0 expansions_seen=0 format header_done=0 i line
     local -a parsed_argv=()
 
     skn_argv=()
+    rust_analyzer_argv=()
+    expansion_specs=()
     explicit_network=0
 
     while IFS= read -r line; do
@@ -54,13 +56,19 @@ parse_skn_info() {
 
         case $line in
             "format: "*) format=${line#"format: "} ;;
+            "expansions:"*)
+                expansions_seen=1
+                expansion_specs=()
+                read -r -a expansion_specs <<<"${line#"expansions:"}"
+                ;;
             "argc: "*) argc=${line#"argc: "} ;;
-            *": "*) ;;
+            *:*) ;;
             *) return 1 ;;
         esac
     done
 
     ((header_done)) || return 1
+    ((expansions_seen)) || return 1
     [[ ${format:-} == skn-info-mk2 ]] || return 1
     [[ ${argc:-} =~ ^[0-9]+$ ]] || return 1
     ((10#$argc >= 2)) || return 1
@@ -74,6 +82,7 @@ parse_skn_info() {
         arg=${parsed_argv[i]}
         if [[ $arg == ++ ]]; then
             delimiter_seen=1
+            rust_analyzer_argv=("${parsed_argv[@]:i + 1}")
             break
         fi
 
@@ -88,15 +97,44 @@ warn_prefetch_failed() {
     echo "$progname: warning: $1 failed" >&2
 }
 
+run_prepare_expansions() {
+    local name profile skn_arg spec status
+
+    # +S is inspection-only; do not run prepare hooks that may create files.
+    for skn_arg in "${skn_argv[@]}"; do
+        [[ $skn_arg == +S ]] && return 0
+    done
+
+    # +0 already gave us the inspect-expanded argv.
+    # Run prepare hooks for side effects only; ignore their output.
+    for spec in "${expansion_specs[@]}"; do
+        name=${spec%%:*}
+        if [[ $spec == *:* ]]; then
+            profile=${spec#*:}
+            SKN_EXPANSION_MODE=prepare "skn-expansion-$name" "$profile" >/dev/null || {
+                status=$?
+                echo "$progname: expansion $spec prepare failed: skn-expansion-$name exited with status $status" >&2
+                exit 2
+            }
+        else
+            SKN_EXPANSION_MODE=prepare "skn-expansion-$name" >/dev/null || {
+                status=$?
+                echo "$progname: expansion $spec prepare failed: skn-expansion-$name exited with status $status" >&2
+                exit 2
+            }
+        fi
+    done
+}
+
 prefetch_project_dependencies() {
-    skn "$real_cargo" +E "${skn_argv[@]}" +N +X cargo ++ fetch ||
+    skn "$real_cargo" +E +X cargo "${skn_argv[@]}" +N ++ fetch ||
         warn_prefetch_failed 'project dependency prefetch'
 }
 
 prefetch_sysroot_dependencies() {
     local library_manifest sysroot
 
-    if ! sysroot=$(skn "${RUSTC:-rustc}" +E "${skn_argv[@]}" +X cargo:no-lockfile ++ --print sysroot); then
+    if ! sysroot=$(skn "${RUSTC:-rustc}" +E +X cargo:no-lockfile "${skn_argv[@]}" ++ --print sysroot); then
         warn_prefetch_failed 'sysroot discovery'
         return 0
     fi
@@ -110,7 +148,7 @@ prefetch_sysroot_dependencies() {
     # Prefetch the sysroot source dependencies the way rust-analyzer later
     # asks Cargo for sysroot metadata: use the discovered toolchain, and make
     # Cargo accept the unstable manifest features used by rust-src.
-    skn "$real_cargo" +E "${skn_argv[@]}" +N +X cargo:no-lockfile +R "$sysroot" \
+    skn "$real_cargo" +E +X cargo:no-lockfile +R "$sysroot" "${skn_argv[@]}" +N \
         +V __CARGO_TEST_CHANNEL_OVERRIDE_DO_NOT_USE_THIS=nightly \
         +V "RUSTUP_TOOLCHAIN=$sysroot" \
         ++ fetch --locked --manifest-path "$library_manifest" ||
@@ -138,12 +176,14 @@ if ((explicit_network)); then
     exit 2
 fi
 
+run_prepare_expansions
 prefetch_project_dependencies
 prefetch_sysroot_dependencies
 
 skn_args+=(
     +X cargo:rust-analyzer
+    "${skn_argv[@]}"
     +V CARGO_NET_OFFLINE=true
 )
 
-exec "${skn_args[@]}" "$@"
+exec "${skn_args[@]}" ++ "${rust_analyzer_argv[@]}"

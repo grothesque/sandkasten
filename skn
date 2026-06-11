@@ -322,6 +322,7 @@ reset_parse_state() {
     env_queue=()
     bind_queue=()
     expansion_args=()
+    expansion_specs=()
     parse_remaining_args=()
 
     if [[ -v SKN_PASS_VARS ]]; then
@@ -444,6 +445,7 @@ parse_skn_options() {
                     expansion_spec=${1:2}
                     shift
                 fi
+                expansion_specs+=("$expansion_spec")
                 parse_expansion_spec "$expansion_spec"
                 if ((apply_expansions)); then
                     run_expansion "$expansion_spec"
@@ -576,11 +578,19 @@ print_info_header() {
 }
 
 print_parsed_info() {
-    local argc
+    local argc sep=' ' spec
 
     argc=$((1 + ${#replay_skn_args[@]} + 1 + ${#command_args[@]} + $#))
 
+    # Wrappers execute the inspect-expanded argv below. The expansion list lets
+    # them run the corresponding prepare hooks first for real execution.
     printf 'format: skn-info-mk2\n'
+    printf 'expansions:'
+    for spec in "${expansion_specs[@]}"; do
+        printf '%s%s' "$sep" "$spec"
+        sep=' '
+    done
+    printf '\n'
     printf 'argc: %d\n' "$argc"
     printf '\n'
     printf '%s\0' "$cmd" "${replay_skn_args[@]}" ++ "${command_args[@]}" "$@"

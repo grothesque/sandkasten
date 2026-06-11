@@ -124,6 +124,9 @@ but not control options such as `+X`, `+S`, `+0`, or `++`.
 
 Expansion helpers run by `skn` get `SKN_EXPANSION_MODE=inspect` for `+S` and `+0`,
 and `SKN_EXPANSION_MODE=prepare` for normal execution.
+In normal use, prepare mode should emit the same `skn` arguments as inspect mode.
+Its purpose is to make those emitted grants valid,
+not to change them.
 In prepare mode, helpers may perform side effects to make emitted grants valid,
 such as creating directories or files that will be bound writable.
 Helpers should treat an unset `SKN_EXPANSION_MODE` as `inspect`,
